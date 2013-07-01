@@ -1,0 +1,51 @@
+{
+  "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC0nGk+7+eKAJGVvaYUrUOzYzDpYY9iWdgX3W/Lt/o37XjhJnO5pRvX7Vpzhr/qTyJx3vc+14+zjurJB/OIN2vUSz0Q05NmC2uhcvEGo10AgMFtwvXffSa1KmmbN80RgO6RMPc1Zw4D2XA+hqwlM2EfHggLpBpUXXNPOA2g7WpKSwIDAQAB",
+  "name": "__MSG_appName__",
+  "description": "__MSG_appDescription__",
+  "version": "0.1",
+  "default_locale": "en",
+  "offline_enabled": false,
+  "app": {
+    "background": {
+      "scripts": [
+        "js/drive.js",
+        "js/bg.js"
+      ]
+    }
+  },
+  "oauth2": {
+    "client_id": "718630397861.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive"
+    ]
+  },
+  "file_handlers": {
+    "gdoc": {
+      "extensions": [
+        "gdoc",
+        "gsheet",
+        "gslide",
+        "gdraw"
+      ],
+      "types": [
+        "application/vnd.google-apps.document",
+        "application/vnd.google-apps.kix",
+        "application/vnd.google-apps.spreadsheet",
+        "application/vnd.google-apps.presentation",
+        "application/vnd.google-apps.drawing"
+      ],
+      "title": "Google Drive Document Viewer"
+    }
+  },
+  "permissions": [
+    "alarms",
+    "experimental",
+    {"fileSystem": ["write"]},
+    "fileSystemPrivate",
+    "identity",
+    "storage",
+    "unlimitedStorage",
+    "https://ssl.gstatic.com/",
+    "https://www.googleapis.com/"
+  ]
+}

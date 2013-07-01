@@ -1,0 +1,8 @@
+{
+  "appName": {
+    "message": "Google Drive Client"
+  },
+  "appDescription": {
+    "message": "A Chrome App that syncs your files with Google Drive."
+  }
+}

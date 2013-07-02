@@ -347,25 +347,60 @@ GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
     if (error || [200, 201, 308].indexOf(xhr.status) == -1) {
       // Upload is interrupted.
       info.interrupted = true;
-      if (!error)
-        error = {};
       error.resumeId = sessionUrl;
+      if (!error) {
+        error = {status: xhr.status};
+        if (xhr.status == 404) {
+          // The upload cannot be resumed any more.
+          delete error['resumeId'];
+          delete this.pendingResumableUploads_[sessionUrl];
+        }
+      }
       info.callback(null, error);
     } else if (xhr.status == '200' || xhr.status == '201') {
       // Upload is completed.
       info.callback(new GoogleDriveEntry(JSON.parse(xhr.responseText),
           this));
-    } else if (xhr.status == 308) {
-      // The current chunk is uploaded.
-      var uploadedRange = xhr.getResponseHeader('Range');
-      var uploadedEnd = uploadedRange.substr(uploadedRange.indexOf('-') + 1);
-      // Google Drive accepts files with a maximum size of 10 GB, which is
-      // still in the range that parseInt can handle.
-      info.currentOffset = parseInt(uploadedEnd) + 1;
-      info.uploadedSize = info.currentOffset;
+    } else if (xhr.status == 308)
+      this.processResumableUploadResponse_(sessionUrl, xhr, info);
+  }.bind(this));
+};
 
-      this.uploadNextChunk_(sessionUrl);
-    }
+GoogleDrive.prototype.processResumableUploadResponse_ = function(sessionUrl,
+    xhr, info) {
+  // The current chunk is uploaded.
+  var uploadedRange = xhr.getResponseHeader('Range');
+  if (uploadedRange) {
+    var uploadedEnd = uploadedRange.substr(uploadedRange.indexOf('-') + 1);
+    // Google Drive accepts files with a maximum size of 10 GB, which is
+    // still in the range that parseInt can handle.
+    info.currentOffset = parseInt(uploadedEnd) + 1;
+  } else
+    info.currentOffset = 0;
+  info.uploadedSize = info.currentOffset;
+
+  this.uploadNextChunk_(sessionUrl);
+};
+
+GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
+  var info = this.pendingResumableUploads_[resumeId];
+  if (!info) {
+    callback(null, {});
+    return;
+  }
+  info.content = content;
+
+  this.sendRequest('PUT', info.sessionUrl,
+      {contentRange: {total: content.size}}, function(xhr, error) {
+    if (error)
+      callback(null, error);
+    else if (xhr.status == 404) {
+      delete this.pendingResumableUploads_[resumeId];
+      callback(null, {status: 404});
+    } else if (xhr.status == 308)
+      this.processResumableUploadResponse_(info.sessionUrl, xhr, info);
+    else
+      callback(null, {status: xhr.status});
   }.bind(this));
 };
 

@@ -9,6 +9,9 @@ var GoogleDrive = function(opt_options) {
   if (!opt_options)
     opt_options = {};
 
+  this.DEFAULT_MIME_TYPE = 'application/octet-stream';
+  // Chunk sizes must be a multiple of 256 KB.
+  this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
   this.DRIVE_API_FILES_BASE_URL = 'https://www.googleapis.com/drive/v2/files';
   this.DRIVE_API_FILES_UPLOAD_URL =
       'https://www.googleapis.com/upload/drive/v2/files';
@@ -22,6 +25,8 @@ var GoogleDrive = function(opt_options) {
     (chrome.identity || chrome.experimental.identity).getAuthToken(
         {}, callback);
   };
+
+  this.pendingResumableUploads_ = {};
 
   return this;
 };
@@ -83,6 +88,7 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
     xhr.setRequestHeader('Authorization', 'Bearer ' + token);
     if (opt_details.contentType)
       xhr.setRequestHeader('Content-Type', opt_details.contentType);
+
     if (opt_details.range) {
       var start = '';
       var end = '';
@@ -93,6 +99,16 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
       xhr.setRequestHeader('Range', 'bytes=' + start + '-' + end);
     }
 
+    if (opt_details.contentRange) {
+      var range = '*';
+      if (opt_details.contentRange.start != null &&
+          opt_details.contentRange.end != null)
+        range = opt_details.contentRange.start.toString() + '-' +
+            opt_details.contentRange.end.toString();
+      xhr.setRequestHeader('Content-Range', 'bytes ' + range + '/' +
+          (opt_details.contentRange.total || '*'));
+    }
+
     var requestBody = opt_details.body;
     if (opt_details.multipartBody) {
       xhr.setRequestHeader('Content-Type', 'multipart/mixed; boundary="' +
@@ -100,6 +116,11 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
       requestBody = this.generateMultipartRequestBody_(
           opt_details.multipartBody);
     }
+
+    if (opt_details.headers)
+      Object.keys(opt_details.headers).forEach(function(name) {
+        xhr.setRequestHeader(name, opt_details.headers[name]);
+      });
 
     xhr.onreadystatechange = function() {
       if (xhr.readyState == XMLHttpRequest.DONE && opt_callback) {
@@ -179,8 +200,8 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
  * @param {object} options Upload request options.
  * @param {object} opt_metadata A Files resource object that represents the
  *     metadata of the file. No metadata will be sent if omitted.
- * @param {Blob} opt_content The content of the file, represented as a Blob.
- *     No content will be sent if omitted.
+ * @param {Blob|File} opt_content The content of the file, represented as a
+ *     Blob. No content will be sent if omitted.
  * @param {function} callback Called with the GoogleDriveEntry object.
  */
 GoogleDrive.prototype.sendUploadRequest = function(method, options,
@@ -216,7 +237,7 @@ GoogleDrive.prototype.sendUploadRequest = function(method, options,
 
 /**
  * Read the content of a blob.
- * @param {Blob} The Blob object to read.
+ * @param {Blob|File} The Blob object to read.
  * @param {string} format 'base64', 'arraybuffer', etc.
  * @param {callback} Called when the operation is completed.
  */
@@ -263,10 +284,90 @@ GoogleDrive.prototype.sendMultipartUploadRequest = function(method, options,
 }
 
 // TODO
-// TODO: Add a callback to fetch file data to upload on demand.
 GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
-    metadata, content, callback) {
-}
+    opt_metadata, content, callback) {
+  console.assert(content.size != 0);
+  var xhr_options = {
+    queryParameters: {
+      uploadType: 'resumable'
+    },
+    headers: {
+      'X-Upload-Content-Type': content.type || this.DEFAULT_MIME_TYPE,
+      'X-Upload-Content-Length': content.size
+    },
+  };
+
+  if (opt_metadata) {
+    xhr_options.contentType = 'application/json';
+    xhr_options.body = JSON.stringify(opt_metadata);
+  }
+  // TODO: URL
+  this.sendRequest(method, this.DRIVE_API_FILES_UPLOAD_URL, xhr_options,
+      function(xhr, error) {
+    if (error)
+      callback(null, error);
+    else if (xhr.status != 200)
+      callback(null, {status: xhr.status});
+    else
+      this.startResumableUploadSession_(xhr.getResponseHeader('Location'),
+          options, content, callback);
+  }.bind(this));
+};
+
+GoogleDrive.prototype.startResumableUploadSession_ = function(sessionUrl,
+    options, content, callback) {
+  var chunkSize = options.chunkSize || this.DEFAULT_UPLOAD_CHUNK_SIZE;
+  // TODO: Persistent storage for interrupted uploads.
+  this.pendingResumableUploads_[sessionUrl] = {
+    sessionUrl: sessionUrl,
+    chunkSize: chunkSize,
+    content: content, 
+    callback: callback,
+    currentOffset: 0,
+    uploadedSize: 0
+  };
+  this.uploadNextChunk_(sessionUrl);
+};
+
+GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
+  var info = this.pendingResumableUploads_[sessionUrl];
+  if (!info)
+    return;
+  var slicedContent = info.content.slice(info.currentOffset,
+      info.currentOffset + info.chunkSize);
+  this.sendRequest('PUT', sessionUrl, {
+    contentRange: {
+      start: info.currentOffset,
+      end: info.currentOffset + slicedContent.size - 1,
+      total: info.content.size
+    },
+    body: slicedContent,
+    contentType: slicedContent.type || this.DEFAULT_MIME_TYPE
+  }, function(xhr, error) {
+    if (error || [200, 201, 308].indexOf(xhr.status) == -1) {
+      // Upload is interrupted.
+      info.interrupted = true;
+      if (!error)
+        error = {};
+      error.resumeId = sessionUrl;
+      info.callback(null, error);
+    } else if (xhr.status == '200' || xhr.status == '201') {
+      // Upload is completed.
+      info.callback(new GoogleDriveEntry(JSON.parse(xhr.responseText),
+          this));
+    } else if (xhr.status == 308) {
+      // The current chunk is uploaded.
+      var uploadedRange = xhr.getResponseHeader('Range');
+      var uploadedEnd = uploadedRange.substr(uploadedRange.indexOf('-') + 1);
+      // Google Drive accepts files with a maximum size of 10 GB, which is
+      // still in the range that parseInt can handle.
+      info.currentOffset = parseInt(uploadedEnd) + 1;
+      info.uploadedSize = info.currentOffset;
+
+      this.uploadNextChunk_(sessionUrl);
+    }
+  }.bind(this));
+};
 
 // TODO: Some multi page requests (changes.list) may have important values in
 // the response (largestChangeId).
@@ -322,7 +423,7 @@ GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
 /**
  * Upload a file to Google Drive.
  * @param {object} metadata File metadata such as description, title, etc.
- * @param {Blob} content File content as a Blob.
+ * @param {Blob|File} content File content as a Blob.
  * @param {function} callback Called to report progress and status.
  */
 GoogleDrive.prototype.upload = function(metadata, content, callback) {
@@ -386,7 +487,7 @@ GoogleDrive.prototype.getAll = function(opt_options, callback) {
  * quota usage, latest change id, etc.
  * @param {function} callback Called with an About Resource.
  */
-GoogleDrive.prototype.getInfo = function(callback) {
+GoogleDrive.prototype.getAccountInfo = function(callback) {
   this.sendRequest('GET', this.DRIVE_API_ABOUT_URL, {}, function(xhr, error) {
     if (error)
       callback(null, error);
@@ -500,4 +601,5 @@ function _() {
     console.log(__ = arguments[0]);
   else
     console.log(__ = arguments);
-var d = new GoogleDrive();}
+}
+var d = new GoogleDrive();

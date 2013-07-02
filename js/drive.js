@@ -32,6 +32,12 @@ var GoogleDrive = function(opt_options) {
 };
 
 /**
+ * @typedef {object} DriveAPIError
+ * @property {object} tokenError
+ * @property {object} xhrError
+ */
+
+/**
  * @typedef {object} MultipartBodyPart
  * @property {string} content The content of this part as a string.
  * @property {string} contentType MIME type for this part.
@@ -52,6 +58,10 @@ var GoogleDrive = function(opt_options) {
  * @property {string} contentType HTTP Content-Type header.
  * @property {MultipartBodyDetails} multipartBody Multipart request body
  *     content.
+ * @property {Array.integer} expectedStatus Expected status codes returned
+ *     from the server to indicate success. |callback| is called with xhrError
+ *     property in the error parameter if the actual status code doesn't match
+ *     any of these codes specified.
  */
 
 /**
@@ -60,10 +70,10 @@ var GoogleDrive = function(opt_options) {
  * @param {string} url Request URL.
  * @param {XHRDetails} opt_details Request details, including request body,
  *     content type, etc.
- * @param {function} opt_callback Called with the response.
+ * @param {function} callback Called with the response.
  */
 GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
-    opt_callback) {
+    callback) {
   if (!opt_details)
     opt_details = {};
   console.assert(!(opt_details.body && opt_details.multipartBody));
@@ -71,8 +81,7 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
 
   this.getToken_(function(token) {
     if (!token) {
-      if (opt_callback)
-        opt_callback(null, {tokenError: true});
+      callback(null, {tokenError: {details: chrome.runtime.lastError}});
       return;
     }
 
@@ -123,8 +132,13 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
       });
 
     xhr.onreadystatechange = function() {
-      if (xhr.readyState == XMLHttpRequest.DONE && opt_callback) {
-        opt_callback(xhr);
+      if (xhr.readyState == XMLHttpRequest.DONE) {
+        if ((opt_details.expectedStatus || []).indexOf(xhr.status) == -1)
+          callback(xhr, {xhrError: {
+              status: xhr.status,
+              response: xhr.response}});
+        else
+          callback(xhr);
         xhr = null;
       }
     };
@@ -167,7 +181,7 @@ GoogleDrive.prototype.generateMultipartRequestBody_ = function(details) {
  */
 GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
   var url = this.DRIVE_API_FILES_BASE_URL;
-  var xhr_details = {};
+  var xhr_details = {expectedStatus: [200]};
 
   if (details.upload)
     url = this.DRIVE_API_FILES_UPLOAD_URL;
@@ -186,10 +200,8 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
   this.sendRequest(method, url, xhr_details, function(xhr, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status == 200)
-      callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
     else
-      callback(null, {status: xhr.status});
+      callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
   }.bind(this));
 };
 
@@ -295,6 +307,7 @@ GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
       'X-Upload-Content-Type': content.type || this.DEFAULT_MIME_TYPE,
       'X-Upload-Content-Length': content.size
     },
+    expectedStatus: [200],
   };
 
   if (opt_metadata) {
@@ -306,8 +319,6 @@ GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
       function(xhr, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status != 200)
-      callback(null, {status: xhr.status});
     else
       this.startResumableUploadSession_(xhr.getResponseHeader('Location'),
           options, content, callback);
@@ -342,21 +353,19 @@ GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
       total: info.content.size
     },
     body: slicedContent,
-    contentType: slicedContent.type || this.DEFAULT_MIME_TYPE
+    contentType: slicedContent.type || this.DEFAULT_MIME_TYPE,
+    expectedStatus: [200, 201, 308],
   }, function(xhr, error) {
-    if (error || [200, 201, 308].indexOf(xhr.status) == -1) {
-      // Upload is interrupted.
-      info.interrupted = true;
-      error.resumeId = sessionUrl;
-      if (!error) {
-        error = {status: xhr.status};
-        if (xhr.status == 404) {
-          // The upload cannot be resumed any more.
-          delete error['resumeId'];
-          delete this.pendingResumableUploads_[sessionUrl];
-        }
+    if (error) {
+      var callback = info.callback;
+      if (xhr.status == 404) {
+        // Upload cannot be resumed any more.
+        delete this.pendingResumableUploads_[sessionUrl];
+      } else {
+        error.resumeId = sessionUrl;
+        info.interrupted = true;
       }
-      info.callback(null, error);
+      callback(null, error);
     } else if (xhr.status == '200' || xhr.status == '201') {
       // Upload is completed.
       info.callback(new GoogleDriveEntry(JSON.parse(xhr.responseText),
@@ -391,16 +400,15 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
   info.content = content;
 
   this.sendRequest('PUT', info.sessionUrl,
-      {contentRange: {total: content.size}}, function(xhr, error) {
-    if (error)
+      {contentRange: {total: content.size}, expectedStatus: [200, 308]}, function(xhr, error) {
+    if (error) {
+      if (xhr.status == 404)
+        delete this.pendingResumableUploads_[resumeId];
       callback(null, error);
-    else if (xhr.status == 404) {
-      delete this.pendingResumableUploads_[resumeId];
-      callback(null, {status: 404});
     } else if (xhr.status == 308)
       this.processResumableUploadResponse_(info.sessionUrl, xhr, info);
     else
-      callback(null, {status: xhr.status});
+      callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
   }.bind(this));
 };
 
@@ -418,7 +426,8 @@ GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
   var xhr_options = {
     queryParameters: {
       maxResults: maxResults,
-    }
+    },
+    expectedStatus: [200],
   };
 
   if (options.queryParameters)
@@ -436,8 +445,6 @@ GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
   this.sendRequest(method, url, xhr_options, function(xhr, error) {
     if (error)
       callback(multiPageOptions.itemsSoFar, error);
-    else if (xhr.status != 200)
-      callback(multiPageOptions.itemsSoFar, {status: xhr.status});
     else {
       var response = JSON.parse(xhr.responseText);
       var items = response.items;
@@ -523,11 +530,10 @@ GoogleDrive.prototype.getAll = function(opt_options, callback) {
  * @param {function} callback Called with an About Resource.
  */
 GoogleDrive.prototype.getAccountInfo = function(callback) {
-  this.sendRequest('GET', this.DRIVE_API_ABOUT_URL, {}, function(xhr, error) {
+  this.sendRequest('GET', this.DRIVE_API_ABOUT_URL,
+      {expectedStatus: [200]}, function(xhr, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status != 200)
-      callback(null, {status: xhr.status});
     else
       callback(JSON.parse(xhr.responseText));
   }.bind(this));
@@ -546,11 +552,10 @@ GoogleDrive.prototype.getProperty = function(fileId, propertyKey, isPublic,
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId +
       '/properties/' + propertyKey;
   this.sendRequest('GET', url, {queryParameters: {visibility:
-      isPublic ? 'PUBLIC' : 'PRIVATE'}}, function(xhr, error) {
+      isPublic ? 'PUBLIC' : 'PRIVATE'}, expectedStatus: [200]},
+      function(xhr, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status != 200)
-      callback(null, {status: xhr.status});
     else
       callback(JSON.parse(xhr.responseText).value);
   }.bind(this));
@@ -573,11 +578,10 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
       key: propertyKey,
       value: value,
       visibility: isPublic ? 'PUBLIC' : 'PRIVATE'
-  }), contentType: 'application/json'}, function(xhr, error) {
+  }), contentType: 'application/json',
+      expectedStatus: [200]}, function(xhr, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status != 200)
-      callback(null, {status: xhr.status});
     else
       callback(JSON.parse(xhr.responseText));
   }.bind(this));
@@ -610,13 +614,11 @@ GoogleDriveEntry.prototype.download = function(options, callback) {
     opt_options = {};
 
   this.drive_.sendRequest('GET', this.details.downloadUrl,
-      {responseType: 'blob'}, function(xhr, error) {
+      {responseType: 'blob', expectedStatus: [200, 206]}, function(xhr, error) {
         if (error)
           callback(null, error);
-        if (xhr.status == 200 || xhr.status == 206)
+        else if (xhr.status == 200 || xhr.status == 206)
           callback(xhr.response);
-        else
-          callback(null, {status: xhr.status});
       }.bind(this));
 };
 

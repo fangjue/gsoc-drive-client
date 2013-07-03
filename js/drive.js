@@ -19,6 +19,7 @@ var GoogleDrive = function(opt_options) {
       'https://www.googleapis.com/drive/v2/changes';
   this.DRIVE_API_ABOUT_URL = 'https://www.googleapis.com/drive/v2/about';
   this.DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+  // TODO: Figure out the best value for list requests.
   this.DRIVE_API_MAX_RESULTS = 1000;
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
@@ -434,11 +435,23 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
   }.bind(this));
 };
 
-// TODO: Some multi page requests (changes.list) may have important values in
-// the response (largestChangeId).
-GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
+/**
+ * Send a xxx.list request and handle multi page results.
+ * @param {string} method HTTP method to use.
+ * @param {string} url The URL of the request.
+ * @param {object} options Options for this list request, such as maxmimum
+ *     number of results.
+ * @param {XHRDetails} xhr_options XHR options for this request.
+ * @param {function} callback Called with complete result on success, partial
+ *     result or null on error with error information.
+ * @param {object} multiPageOptions_ Used internally by this method. Do not
+ *     supply it when you call this method.
+ */
+GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
     xhr_options, callback, multiPageOptions_) {
   var maxResults;
+  // TODO: Add maxResultsPerRequest (changes.list is likely to fail with
+  // maxResults == 1000).
   if (options.maxResults)
     maxResults = Math.min(options.maxResults, this.DRIVE_API_MAX_RESULTS);
   else
@@ -446,29 +459,49 @@ GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
 
   if (!xhr_options.queryParameters)
     xhr_options.queryParameters = {};
-  xhr_options.queryParameters.maxResults = maxResults;
+  // Some list requests doesn't support maxResults (eg. properties).
+  if (!options.oneTimeRequest)
+    xhr_options.queryParameters.maxResults = maxResults;
+
+  var fields = '';
+  if (options.fields) {
+    fields = options.fields;
+    // nextPageToken is required for multi-page list requests.
+    if (fields.indexOf('nextPageToken') == -1 && !options.oneTimeRequest)
+      fields = 'nextPageToken,' + fields;
+  }
+  if (options.itemsFields) {
+    if (fields)
+      fields += ',';
+    fields += 'items(' + options.itemsFields + ')';
+  }
+  if (fields)
+    xhr_options.queryParameters.fields = fields;
 
   if (!multiPageOptions_)
-    multiPageOptions_ = {itemsSoFar: []};
+    multiPageOptions_ = {responseSoFar: null};
   if (multiPageOptions_.nextPageToken)
     xhr_options.queryParameters.pageToken = multiPageOptions_.nextPageToken;
 
   this.sendDriveRequest_(method, url, xhr_options, function(xhr, error) {
     if (error)
-      callback(multiPageOptions_.itemsSoFar, error);
+      callback(multiPageOptions_.responseSoFar, error);
     else {
       var response = JSON.parse(xhr.responseText);
       var items = response.items;
-      multiPageOptions_.itemsSoFar =
-          multiPageOptions_.itemsSoFar.concat(items);
-      if (options.maxResults)
-        callback(multiPageOptions_.itemsSoFar);
+      if (multiPageOptions_.responseSoFar)
+        multiPageOptions_.responseSoFar.items =
+            multiPageOptions_.responseSoFar.items.concat(items);
+      else
+        multiPageOptions_.responseSoFar = response;
+      if (options.maxResults || options.oneTimeRequest)
+        callback(multiPageOptions_.responseSoFar);
       else if (response.nextPageToken) {
         multiPageOptions_.nextPageToken = response.nextPageToken;
-        this.sendMultiPageRequest(method, url, options, xhr_options, callback,
+        this.sendListRequest_(method, url, options, xhr_options, callback,
             multiPageOptions_);
       } else
-        callback(multiPageOptions_.itemsSoFar);
+        callback(multiPageOptions_.responseSoFar);
     }
   }.bind(this));
 };
@@ -524,14 +557,19 @@ GoogleDrive.prototype.getChildren = function(parentId, opt_options, callback) {
 };
 
 /**
- * @param {object} opt_options
+ * @param {object} options
  * @param {function} callback Called with GoogleDriveEntry objects.
  */
-GoogleDrive.prototype.getAll = function(opt_options, callback) {
+GoogleDrive.prototype.getAll = function(options, callback) {
   // TODO opt_options -> options/xhr_options.
-  this.sendMultiPageRequest('GET', this.DRIVE_API_FILES_BASE_URL,
-      opt_options, {}, function(items, error) {
-    callback(items.map(function(item) {
+  var list_options = {fields: ''};
+  var xhr_options = {queryParameters: {}};
+  if (options.q)
+    xhr_options.queryParameters.q = options.q;
+  list_options.itemsFields = options.fields || this.fields_.files;
+  this.sendListRequest_('GET', this.DRIVE_API_FILES_BASE_URL, list_options,
+      xhr_options, function(result, error) {
+    callback(result.items.map(function(item) {
       return new GoogleDriveEntry(item, this);
     }.bind(this)), error);
   }.bind(this));
@@ -601,8 +639,18 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
 };
 
 GoogleDrive.prototype.getChanges = function(options, callback) {
-  this.sendMultiPageRequest('GET', this.DRIVE_API_CHANGES_BASE_URL, {},
-      {queryParameters: {startChangeId: options.startChangeId}}, callback);
+  this.sendListRequest_('GET',
+                       this.DRIVE_API_CHANGES_BASE_URL,
+                       {
+                         fields: 'largestChangeId',
+                         itemsFields: 'id,fileId,deleted,file'
+                       },
+                       {
+                         queryParameters: {
+                           startChangeId: options.startChangeId
+                         }
+                       },
+                       callback);
 };
 
 var GoogleDriveEntry = function(details, drive) {

@@ -26,6 +26,10 @@ var GoogleDrive = function(opt_options) {
         {}, callback);
   };
 
+  if (!opt_options.prettyPrint)
+    this.prettyPrint_ = 'false';
+  this.fields_ = opt_options.fields || {};
+
   this.pendingResumableUploads_ = {};
 
   return this;
@@ -65,7 +69,7 @@ var GoogleDrive = function(opt_options) {
  */
 
 /**
- * Send a XHR request.
+ * Send a generic XHR request.
  * @param {string} method 'GET', 'POST' or other HTTP methods.
  * @param {string} url Request URL.
  * @param {XHRDetails} opt_details Request details, including request body,
@@ -133,7 +137,7 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
 
     xhr.onreadystatechange = function() {
       if (xhr.readyState == XMLHttpRequest.DONE) {
-        if ((opt_details.expectedStatus || []).indexOf(xhr.status) == -1)
+        if ((opt_details.expectedStatus || [200]).indexOf(xhr.status) == -1)
           callback(xhr, {xhrError: {
               status: xhr.status,
               response: xhr.response}});
@@ -148,6 +152,8 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
 };
 
 GoogleDrive.prototype.generateQuery_ = function(params) {
+  if (Object.keys(params).length == 0)
+    return '';
   return '?' + Object.keys(params).map(function(key) {
     return escape(key) + '=' + escape(params[key]);
   }).join('&');
@@ -173,6 +179,15 @@ GoogleDrive.prototype.generateMultipartRequestBody_ = function(details) {
   }).join('') + ending;
 };
 
+GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options, callback) {
+  if (this.prettyPrint_)
+    if (!options.queryParameters)
+      options.queryParameters = {};
+    if (!options.queryParameters.prettyPrint)
+      options.queryParameters.prettyPrint = this.prettyPrint_;
+  this.sendRequest(method, url, options, callback);
+};
+
 /**
  * Send an API request to Google Drive that responds with a Files resource.
  * @param {string} method HTTP method.
@@ -181,7 +196,10 @@ GoogleDrive.prototype.generateMultipartRequestBody_ = function(details) {
  */
 GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
   var url = this.DRIVE_API_FILES_BASE_URL;
-  var xhr_details = {expectedStatus: [200]};
+  var xhr_details = {
+    expectedStatus: [200],
+    queryParameters: {},
+  };
 
   if (details.upload)
     url = this.DRIVE_API_FILES_UPLOAD_URL;
@@ -189,7 +207,11 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
     url += '/' + details.fileId;
 
   if (details.uploadType)
-    xhr_details.queryParameters = {uploadType: details.uploadType};
+    xhr_details.queryParameters.uploadType = details.uploadType;
+  if (details.fields)
+    xhr_details.queryParameters.fields = details.fields;
+  else if (this.fields_.files)
+    xhr_details.queryParameters.fields = this.fields_.files;
   if (details.multipartBody)
     xhr_details.multipartBody = details.multipartBody;
   if (details.body)
@@ -197,7 +219,7 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
   if (!details.upload)
     xhr_details.contentType = 'application/json';
 
-  this.sendRequest(method, url, xhr_details, function(xhr, error) {
+  this.sendDriveRequest_(method, url, xhr_details, function(xhr, error) {
     if (error)
       callback(null, error);
     else
@@ -315,7 +337,7 @@ GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
     xhr_options.body = JSON.stringify(opt_metadata);
   }
   // TODO: URL
-  this.sendRequest(method, this.DRIVE_API_FILES_UPLOAD_URL, xhr_options,
+  this.sendDriveRequest_(method, this.DRIVE_API_FILES_UPLOAD_URL, xhr_options,
       function(xhr, error) {
     if (error)
       callback(null, error);
@@ -346,7 +368,7 @@ GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
     return;
   var slicedContent = info.content.slice(info.currentOffset,
       info.currentOffset + info.chunkSize);
-  this.sendRequest('PUT', sessionUrl, {
+  this.sendDriveRequest_('PUT', sessionUrl, {
     contentRange: {
       start: info.currentOffset,
       end: info.currentOffset + slicedContent.size - 1,
@@ -399,7 +421,7 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
   }
   info.content = content;
 
-  this.sendRequest('PUT', info.sessionUrl,
+  this.sendDriveRequest_('PUT', info.sessionUrl,
       {contentRange: {total: content.size}, expectedStatus: [200, 308]}, function(xhr, error) {
     if (error) {
       if (xhr.status == 404)
@@ -415,49 +437,38 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
 // TODO: Some multi page requests (changes.list) may have important values in
 // the response (largestChangeId).
 GoogleDrive.prototype.sendMultiPageRequest = function(method, url, options,
-    callback, multiPageOptions) {
+    xhr_options, callback, multiPageOptions_) {
   var maxResults;
   if (options.maxResults)
     maxResults = Math.min(options.maxResults, this.DRIVE_API_MAX_RESULTS);
   else
     maxResults = this.DRIVE_API_MAX_RESULTS;
 
-  // TODO: options -> xhr_options.
-  var xhr_options = {
-    queryParameters: {
-      maxResults: maxResults,
-    },
-    expectedStatus: [200],
-  };
+  if (!xhr_options.queryParameters)
+    xhr_options.queryParameters = {};
+  xhr_options.queryParameters.maxResults = maxResults;
 
-  if (options.queryParameters)
-    for (var key in options.queryParameters)
-      xhr_options.queryParameters[key] = options.queryParameters[key];
+  if (!multiPageOptions_)
+    multiPageOptions_ = {itemsSoFar: []};
+  if (multiPageOptions_.nextPageToken)
+    xhr_options.queryParameters.pageToken = multiPageOptions_.nextPageToken;
 
-  if (options.q)
-    xhr_options.queryParameters['q'] = options.q;
-
-  if (!multiPageOptions)
-    multiPageOptions = {itemsSoFar: []};
-  if (multiPageOptions.nextPageToken)
-    xhr_options.queryParameters['pageToken'] = multiPageOptions.nextPageToken;
-
-  this.sendRequest(method, url, xhr_options, function(xhr, error) {
+  this.sendDriveRequest_(method, url, xhr_options, function(xhr, error) {
     if (error)
-      callback(multiPageOptions.itemsSoFar, error);
+      callback(multiPageOptions_.itemsSoFar, error);
     else {
       var response = JSON.parse(xhr.responseText);
       var items = response.items;
-      multiPageOptions.itemsSoFar =
-          multiPageOptions.itemsSoFar.concat(items);
+      multiPageOptions_.itemsSoFar =
+          multiPageOptions_.itemsSoFar.concat(items);
       if (options.maxResults)
-        callback(multiPageOptions.itemsSoFar);
+        callback(multiPageOptions_.itemsSoFar);
       else if (response.nextPageToken) {
-        multiPageOptions.nextPageToken = response.nextPageToken;
-        this.sendMultiPageRequest(method, url, options, callback,
-            multiPageOptions);
+        multiPageOptions_.nextPageToken = response.nextPageToken;
+        this.sendMultiPageRequest(method, url, options, xhr_options, callback,
+            multiPageOptions_);
       } else
-        callback(multiPageOptions.itemsSoFar);
+        callback(multiPageOptions_.itemsSoFar);
     }
   }.bind(this));
 };
@@ -517,7 +528,9 @@ GoogleDrive.prototype.getChildren = function(parentId, opt_options, callback) {
  * @param {function} callback Called with GoogleDriveEntry objects.
  */
 GoogleDrive.prototype.getAll = function(opt_options, callback) {
-  this.sendMultiPageRequest('GET', this.DRIVE_API_FILES_BASE_URL, opt_options || {}, function(items, error) {
+  // TODO opt_options -> options/xhr_options.
+  this.sendMultiPageRequest('GET', this.DRIVE_API_FILES_BASE_URL,
+      opt_options, {}, function(items, error) {
     callback(items.map(function(item) {
       return new GoogleDriveEntry(item, this);
     }.bind(this)), error);
@@ -530,7 +543,7 @@ GoogleDrive.prototype.getAll = function(opt_options, callback) {
  * @param {function} callback Called with an About Resource.
  */
 GoogleDrive.prototype.getAccountInfo = function(callback) {
-  this.sendRequest('GET', this.DRIVE_API_ABOUT_URL,
+  this.sendDriveRequest_('GET', this.DRIVE_API_ABOUT_URL,
       {expectedStatus: [200]}, function(xhr, error) {
     if (error)
       callback(null, error);
@@ -551,7 +564,7 @@ GoogleDrive.prototype.getProperty = function(fileId, propertyKey, isPublic,
     callback) {
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId +
       '/properties/' + propertyKey;
-  this.sendRequest('GET', url, {queryParameters: {visibility:
+  this.sendDriveRequest_('GET', url, {queryParameters: {visibility:
       isPublic ? 'PUBLIC' : 'PRIVATE'}, expectedStatus: [200]},
       function(xhr, error) {
     if (error)
@@ -574,7 +587,7 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId + '/properties';
   // properties.insert request works as expected even if the property
   // already exists.
-  this.sendRequest('POST', url, {body: JSON.stringify({
+  this.sendDriveRequest_('POST', url, {body: JSON.stringify({
       key: propertyKey,
       value: value,
       visibility: isPublic ? 'PUBLIC' : 'PRIVATE'
@@ -588,7 +601,7 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
 };
 
 GoogleDrive.prototype.getChanges = function(options, callback) {
-  this.sendMultiPageRequest('GET', this.DRIVE_API_CHANGES_BASE_URL,
+  this.sendMultiPageRequest('GET', this.DRIVE_API_CHANGES_BASE_URL, {},
       {queryParameters: {startChangeId: options.startChangeId}}, callback);
 };
 

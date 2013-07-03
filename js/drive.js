@@ -21,6 +21,8 @@ var GoogleDrive = function(opt_options) {
   this.DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
   // TODO: Figure out the best value for list requests.
   this.DRIVE_API_MAX_RESULTS = 1000;
+  // Files larger than 1 MB will use resumable upload.
+  this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
     (chrome.identity || chrome.experimental.identity).getAuthToken(
@@ -59,7 +61,8 @@ var GoogleDrive = function(opt_options) {
  * @typedef {object} XHRDetails
  * @property {string} responseType XHR response type, such as 'blob'.
  * @property {object} queryParameters A dictionary containing query parameters.
- *     Keys are parameter names and values are parameter values.
+ *     Keys are parameter names and values are parameter values. This will be
+ *     ignored if the URL already contains a query string.
  * @property {string} contentType HTTP Content-Type header.
  * @property {MultipartBodyDetails} multipartBody Multipart request body
  *     content.
@@ -90,7 +93,7 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
       return;
     }
 
-    if (opt_details.queryParameters)
+    if (opt_details.queryParameters && url.indexOf('?') == -1)
       url += this.generateQuery_(opt_details.queryParameters);
 
     var xhr = new XMLHttpRequest();
@@ -219,6 +222,8 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
     xhr_details.body = details.body;
   if (!details.upload)
     xhr_details.contentType = 'application/json';
+  if (details.contentType)
+    xhr_details.contentType = details.contentType;
 
   this.sendDriveRequest_(method, url, xhr_details, function(xhr, error) {
     if (error)
@@ -243,11 +248,13 @@ GoogleDrive.prototype.sendUploadRequest = function(method, options,
     opt_metadata, opt_content, callback) {
   console.assert(opt_metadata || opt_content);
 
-  // TODO: Send resumable upload request when the file size is larger than
-  // a certain threshold.
   if (opt_metadata && opt_content)
-    this.sendMultipartUploadRequest(method, options, opt_metadata,
-        opt_content, callback);
+    if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
+      this.sendResumableUploadRequest(method, options, opt_metadata,
+          opt_content, callback);
+    else
+      this.sendMultipartUploadRequest(method, options, opt_metadata,
+          opt_content, callback);
   else if (opt_metadata) {
     var filesRequestOptions = {
       body: JSON.stringify(opt_metadata)
@@ -255,19 +262,23 @@ GoogleDrive.prototype.sendUploadRequest = function(method, options,
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
     this.sendFilesRequest(method, filesRequestOptions, callback);
-  } else
-    this.readBlob_(opt_content, 'base64', function(base64Data) {
+  } else {
+    if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
+      this.sendResumableUploadRequest('PUT', options, null, opt_content,
+          callback);
+    else {
       var filesRequestOptions = {
-        upload: true,
         uploadType: 'media',
-        body: base64Data
+        body: opt_content,
+        contentType: opt_content.type || this.DEFAULT_MIME_TYPE,
       };
       if (options.upload)
-        fileRequestOptions.upload = options.upload;
+        filesRequestOptions.upload = options.upload;
       if (options.fileId)
         filesRequestOptions.fileId = options.fileId;
       this.sendFilesRequest(method, filesRequestOptions, callback);
-    }.bind(this));
+    }
+  }
 };
 
 /**
@@ -337,8 +348,10 @@ GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
     xhr_options.contentType = 'application/json';
     xhr_options.body = JSON.stringify(opt_metadata);
   }
-  // TODO: URL
-  this.sendDriveRequest_(method, this.DRIVE_API_FILES_UPLOAD_URL, xhr_options,
+  var url = this.DRIVE_API_FILES_UPLOAD_URL;
+  if (options.fileId)
+    url += '/' + options.fileId;
+  this.sendDriveRequest_(method, url, xhr_options,
       function(xhr, error) {
     if (error)
       callback(null, error);
@@ -530,9 +543,9 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
   if (opt_metadataUpdates)
     this.sendUploadRequest('PATCH', {fileId: fileId},
-        opt_metadata, null, callback);
+        opt_metadataUpdates, null, callback);
   else if (opt_content || opt_fullMetadata)
-    this.sendUploadRequest('PUT', {fileId: fileId},
+    this.sendUploadRequest('PUT', {fileId: fileId, upload: true},
         opt_fullMetadata, opt_content, callback);
 };
 

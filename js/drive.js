@@ -755,8 +755,8 @@ GoogleDriveEntry.prototype.download = function(options, callback) {
     return;
   }
 
-  if (!opt_options)
-    opt_options = {};
+  if (!options)
+    options = {};
 
   this.drive_.sendRequest('GET', this.details.downloadUrl,
       {responseType: 'blob', expectedStatus: [200, 206]}, function(xhr, error) {
@@ -785,3 +785,16 @@ function _() {
     console.log(__ = arguments);
 }
 var d = new GoogleDrive();
+
+function asyncForEach(items, operationCallback, resultCallback, results_) {
+  if (!results_)
+    results_ = [];
+
+  if (items[0])
+    operationCallback(items[0], function() {
+      results_.push(arguments);
+      asyncForEach(items.slice(1), operationCallback, resultCallback, results_);
+    });
+  else
+    resultCallback(results_);
+}

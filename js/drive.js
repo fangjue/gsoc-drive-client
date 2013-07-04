@@ -672,17 +672,24 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
     filesFields = 'file(' + filesFields + ')';
   else
     filesFields = 'file';
+
+  var xhr_options = {
+    queryParameters: {
+      startChangeId: options.startChangeId
+    }
+  };
+
+  if (options.includeDeleted == false)
+    xhr_options.queryParameters.includeDeleted = 'false';
+  if (options.includeSubscribed == false)
+    xhr_options.queryParameters.includeSubscribed = 'false';
   this.sendListRequest_('GET',
                        this.DRIVE_API_CHANGES_BASE_URL,
                        {
                          fields: 'largestChangeId',
                          itemsFields: 'id,fileId,deleted,' + filesFields
                        },
-                       {
-                         queryParameters: {
-                           startChangeId: options.startChangeId
-                         }
-                       },
+                       xhr_options,
                        callback);
 };
 

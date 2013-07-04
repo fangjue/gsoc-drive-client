@@ -9,20 +9,26 @@ var GoogleDrive = function(opt_options) {
   if (!opt_options)
     opt_options = {};
 
-  this.DEFAULT_MIME_TYPE = 'application/octet-stream';
+  /** @const */ this.DEFAULT_MIME_TYPE = 'application/octet-stream';
+  /** @const */ this.DRIVE_FOLDER_MIME_TYPE =
+      'application/vnd.google-apps.folder';
+
   // Chunk sizes must be a multiple of 256 KB.
-  this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
-  this.DRIVE_API_FILES_BASE_URL = 'https://www.googleapis.com/drive/v2/files';
-  this.DRIVE_API_FILES_UPLOAD_URL =
+  /** @const */ this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
+
+  /** @const */ this.DRIVE_API_FILES_BASE_URL =
+      'https://www.googleapis.com/drive/v2/files';
+  /** @const */ this.DRIVE_API_FILES_UPLOAD_URL =
       'https://www.googleapis.com/upload/drive/v2/files';
-  this.DRIVE_API_CHANGES_BASE_URL =
+  /** @const */ this.DRIVE_API_CHANGES_BASE_URL =
       'https://www.googleapis.com/drive/v2/changes';
-  this.DRIVE_API_ABOUT_URL = 'https://www.googleapis.com/drive/v2/about';
-  this.DRIVE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+  /** @const */ this.DRIVE_API_ABOUT_URL =
+      'https://www.googleapis.com/drive/v2/about';
+
   // TODO: Figure out the best value for list requests.
-  this.DRIVE_API_MAX_RESULTS = 1000;
+  /** @const */ this.DRIVE_API_MAX_RESULTS = 1000;
   // Files larger than 1 MB will use resumable upload.
-  this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
+  /** @const */ this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
     (chrome.identity || chrome.experimental.identity).getAuthToken(

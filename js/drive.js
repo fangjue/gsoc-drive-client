@@ -594,8 +594,11 @@ GoogleDrive.prototype.getAll = function(options, callback) {
   list_options.itemsFields = options.fields || this.getFilesFields_();
   this.sendListRequest_('GET', this.DRIVE_API_FILES_BASE_URL, list_options,
       xhr_options, function(result, error) {
-    callback(result.items.map(function(item) {
-      return new GoogleDriveEntry(item, this);
+    if (error)
+      callback(null, error);
+    else
+      callback(result.items.map(function(item) {
+        return new GoogleDriveEntry(item, this);
     }.bind(this)), error);
   }.bind(this));
 };

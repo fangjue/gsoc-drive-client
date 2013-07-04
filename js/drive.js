@@ -489,17 +489,18 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
   var fields = '';
   if (options.fields) {
     fields = options.fields;
-    // nextPageToken is required for multi-page list requests.
-    if (fields.indexOf('nextPageToken') == -1 && !options.oneTimeRequest)
-      fields = 'nextPageToken,' + fields;
   }
   if (options.itemsFields) {
     if (fields)
       fields += ',';
     fields += 'items(' + options.itemsFields + ')';
   }
-  if (fields)
+  if (fields) {
+    // nextPageToken is required for multi-page list requests.
+    if (fields.indexOf('nextPageToken') == -1 && !options.oneTimeRequest)
+      fields = 'nextPageToken,' + fields;
     xhr_options.queryParameters.fields = fields;
+  }
 
   if (!multiPageOptions_)
     multiPageOptions_ = {responseSoFar: null};

@@ -38,6 +38,10 @@ var GoogleDrive = function(opt_options) {
   return this;
 };
 
+GoogleDrive.prototype.getFilesFields_ = function() {
+  return this.fields_.files;
+};
+
 /**
  * @typedef {object} DriveAPIError
  * @property {object} tokenError
@@ -214,8 +218,8 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
     xhr_details.queryParameters.uploadType = details.uploadType;
   if (details.fields)
     xhr_details.queryParameters.fields = details.fields;
-  else if (this.fields_.files)
-    xhr_details.queryParameters.fields = this.fields_.files;
+  else if (this.getFilesFields_())
+    xhr_details.queryParameters.fields = this.getFilesFields_();
   if (details.multipartBody)
     xhr_details.multipartBody = details.multipartBody;
   if (details.body)
@@ -541,6 +545,7 @@ GoogleDrive.prototype.get = function(fileId, callback) {
 GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
     opt_metadataUpdates, opt_content, callback) {
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
+  console.assert(!(opt_metadataUpdates && opt_content));
   if (opt_metadataUpdates)
     this.sendUploadRequest('PATCH', {fileId: fileId},
         opt_metadataUpdates, null, callback);
@@ -579,7 +584,7 @@ GoogleDrive.prototype.getAll = function(options, callback) {
   var xhr_options = {queryParameters: {}};
   if (options.q)
     xhr_options.queryParameters.q = options.q;
-  list_options.itemsFields = options.fields || this.fields_.files;
+  list_options.itemsFields = options.fields || this.getFilesFields_();
   this.sendListRequest_('GET', this.DRIVE_API_FILES_BASE_URL, list_options,
       xhr_options, function(result, error) {
     callback(result.items.map(function(item) {
@@ -652,11 +657,16 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
 };
 
 GoogleDrive.prototype.getChanges = function(options, callback) {
+  var filesFields = this.getFilesFields_() || options.filesFields;
+  if (filesFields)
+    filesFields = 'file(' + filesFields + ')';
+  else
+    filesFields = 'file';
   this.sendListRequest_('GET',
                        this.DRIVE_API_CHANGES_BASE_URL,
                        {
                          fields: 'largestChangeId',
-                         itemsFields: 'id,fileId,deleted,file'
+                         itemsFields: 'id,fileId,deleted,' + filesFields
                        },
                        {
                          queryParameters: {

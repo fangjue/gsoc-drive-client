@@ -151,7 +151,14 @@ GoogleDrive.prototype.sendRequest = function(method, url, opt_details,
 
     xhr.onreadystatechange = function() {
       if (xhr.readyState == XMLHttpRequest.DONE) {
-        if ((opt_details.expectedStatus || [200]).indexOf(xhr.status) == -1)
+        var error = false;
+        if (opt_details.expectedStatus) {
+          if (opt_details.expectedStatus.indexOf(xhr.status) == -1)
+            error = true;
+        } else if (xhr.status < 200 || xhr.status >= 300)
+          error = true;
+
+        if (error)
           callback(xhr, {xhrError: {
               status: xhr.status,
               response: xhr.response}});
@@ -217,8 +224,11 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
 
   if (details.upload)
     url = this.DRIVE_API_FILES_UPLOAD_URL;
-  if (details.fileId)
+  if (details.fileId) {
     url += '/' + details.fileId;
+    if (details.operation)
+      url += '/' + details.operation;
+  }
 
   if (details.uploadType)
     xhr_details.queryParameters.uploadType = details.uploadType;
@@ -446,7 +456,8 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
   info.content = content;
 
   this.sendDriveRequest_('PUT', info.sessionUrl,
-      {contentRange: {total: content.size}, expectedStatus: [200, 308]}, function(xhr, error) {
+      {contentRange: {total: content.size}, expectedStatus: [200, 308]},
+      function(xhr, error) {
     if (error) {
       if (xhr.status == 404)
         delete this.pendingResumableUploads_[resumeId];
@@ -567,6 +578,39 @@ GoogleDrive.prototype.createFolder = function(parentId, title, callback) {
       parents: [{id: parentId}],
       mimeType: this.DRIVE_FOLDER_MIME_TYPE
   })}, callback);
+};
+
+/**
+ * Move a file or folder to the trash.
+ * @param {string} fileId The file's id.
+ * @param {callback} Called with the GoogleDriveEntry object representing
+ *     the file.
+ */
+GoogleDrive.prototype.trash = function(fileId, callback) {
+  this.sendFilesRequest('POST', {fileId: fileId, operation: 'trash'}, callback);
+};
+
+/**
+ * Restore a file or folder from the trash.
+ * @param {string} fileId The file's id.
+ * @param {callback} Called with the GoogleDriveEntry object representing
+ *     the file.
+ */
+GoogleDrive.prototype.untrash = function(fileId, callback) {
+  this.sendFilesRequest('POST', {fileId: fileId, operation: 'untrash'}, callback);
+};
+
+/**
+ * Permanently delete a file or a folder including everything in the folder
+ * (even if some files also belong to other folders).
+ * @param {string} fileId The file's id.
+ * @param {callback} Called when the request is completed.
+ */
+GoogleDrive.prototype.delete = function(fileId, callback) {
+  this.sendRequest('DELETE', this.DRIVE_API_FILES_BASE_URL + '/' + fileId,
+      {}, function(xhr, error) {
+    callback(error);
+  });
 };
 
 /**

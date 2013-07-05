@@ -252,7 +252,7 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options, callbac
  * @param {object} details
  * @param {function} callback Called with the returned GoogleDriveEntry.
  */
-GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
+GoogleDrive.prototype.sendFilesRequest_ = function(method, details, callback) {
   var url = this.DRIVE_API_FILES_BASE_URL;
   var xhr_details = {
     expectedStatus: [200],
@@ -301,16 +301,16 @@ GoogleDrive.prototype.sendFilesRequest = function(method, details, callback) {
  *     Blob. No content will be sent if omitted.
  * @param {function} callback Called with the GoogleDriveEntry object.
  */
-GoogleDrive.prototype.sendUploadRequest = function(method, options,
+GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
     opt_metadata, opt_content, callback) {
   console.assert(opt_metadata || opt_content);
 
   if (opt_metadata && opt_content)
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
-      this.sendResumableUploadRequest(method, options, opt_metadata,
+      this.sendResumableUploadRequest_(method, options, opt_metadata,
           opt_content, callback);
     else
-      this.sendMultipartUploadRequest(method, options, opt_metadata,
+      this.sendMultipartUploadRequest_(method, options, opt_metadata,
           opt_content, callback);
   else if (opt_metadata) {
     var filesRequestOptions = {
@@ -318,10 +318,10 @@ GoogleDrive.prototype.sendUploadRequest = function(method, options,
     };
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
-    this.sendFilesRequest(method, filesRequestOptions, callback);
+    this.sendFilesRequest_(method, filesRequestOptions, callback);
   } else {
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
-      this.sendResumableUploadRequest('PUT', options, null, opt_content,
+      this.sendResumableUploadRequest_('PUT', options, null, opt_content,
           callback);
     else {
       var filesRequestOptions = {
@@ -333,7 +333,7 @@ GoogleDrive.prototype.sendUploadRequest = function(method, options,
         filesRequestOptions.upload = options.upload;
       if (options.fileId)
         filesRequestOptions.fileId = options.fileId;
-      this.sendFilesRequest(method, filesRequestOptions, callback);
+      this.sendFilesRequest_(method, filesRequestOptions, callback);
     }
   }
 };
@@ -358,7 +358,7 @@ GoogleDrive.prototype.readBlob_ = function(blob, format, callback) {
     fileReader.readAsArrayBuffer(blob);
 };
 
-GoogleDrive.prototype.sendMultipartUploadRequest = function(method, options,
+GoogleDrive.prototype.sendMultipartUploadRequest_ = function(method, options,
     metadata, content, callback) {
   this.readBlob_(content, 'base64', function(base64Data) {
     var filesRequestOptions = {
@@ -382,12 +382,12 @@ GoogleDrive.prototype.sendMultipartUploadRequest = function(method, options,
 
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
-    this.sendFilesRequest(method, filesRequestOptions, callback);
+    this.sendFilesRequest_(method, filesRequestOptions, callback);
   }.bind(this));
 }
 
 // TODO
-GoogleDrive.prototype.sendResumableUploadRequest = function(method, options,
+GoogleDrive.prototype.sendResumableUploadRequest_ = function(method, options,
     opt_metadata, content, callback) {
   console.assert(content.size != 0);
   var xhr_options = {
@@ -582,35 +582,56 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
  * Upload a file to Google Drive.
  * @param {object} metadata File metadata such as description, title, etc.
  * @param {Blob|File} content File content as a Blob.
+ * @param {object} options
  * @param {function} callback Called to report progress and status.
  */
-GoogleDrive.prototype.upload = function(metadata, content, callback) {
-  this.sendUploadRequest('POST', {}, metadata, content, callback)
+GoogleDrive.prototype.upload = function(metadata, content, options, callback) {
+  this.sendUploadRequest_('POST', {}, metadata, content, callback)
 };
 
 /**
  * Get a file's metadata by ID.
  * @param {string} fileId The file's ID.
+ * @param {object} options
  * @param {function} callback Called with a GoogleDriveEntry object.
  */
-GoogleDrive.prototype.get = function(fileId, callback) {
-  this.sendFilesRequest('GET', {fileId: fileId}, callback);
+GoogleDrive.prototype.get = function(fileId, options, callback) {
+  this.sendFilesRequest_('GET', {fileId: fileId}, callback);
 };
 
+/**
+ * Update a file's metadata ond/or content.
+ * @param {string} fileId The file's id.
+ * @param {object} opt_fullMetadata The file's full updated metadata.
+ * @param {object} opt_metadataUpdates The file's metadata to update, only
+ *     containing fields that need to be updated. This parameter cannot be used
+ *     with opt_content or opt_fullMetadata.
+ * @param {Blob|File} opt_content The file's new content.
+ * @param {object} options
+ * @param {function} callback Called with the updated file's metadata.
+ */
 GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
-    opt_metadataUpdates, opt_content, callback) {
+    opt_metadataUpdates, opt_content, options, callback) {
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
   console.assert(!(opt_metadataUpdates && opt_content));
   if (opt_metadataUpdates)
-    this.sendUploadRequest('PATCH', {fileId: fileId},
+    this.sendUploadRequest_('PATCH', {fileId: fileId},
         opt_metadataUpdates, null, callback);
   else if (opt_content || opt_fullMetadata)
-    this.sendUploadRequest('PUT', {fileId: fileId, upload: true},
+    this.sendUploadRequest_('PUT', {fileId: fileId, upload: true},
         opt_fullMetadata, opt_content, callback);
 };
 
-GoogleDrive.prototype.createFolder = function(parentId, title, callback) {
-  this.sendFilesRequest('POST', {body: JSON.stringify({
+/**
+ * Create a new folder.
+ * @param {string} parentId The parent folder's id.
+ * @param {string} title The folder's name.
+ * @param {object} options
+ * @param {function} callback Called with the created folder's metadata.
+ */
+GoogleDrive.prototype.createFolder = function(parentId, title, options,
+    callback) {
+  this.sendFilesRequest_('POST', {body: JSON.stringify({
       title: title,
       parents: [{id: parentId}],
       mimeType: this.DRIVE_FOLDER_MIME_TYPE
@@ -620,30 +641,34 @@ GoogleDrive.prototype.createFolder = function(parentId, title, callback) {
 /**
  * Move a file or folder to the trash.
  * @param {string} fileId The file's id.
+ * @param {object} options
  * @param {callback} Called with the GoogleDriveEntry object representing
  *     the file.
  */
-GoogleDrive.prototype.trash = function(fileId, callback) {
-  this.sendFilesRequest('POST', {fileId: fileId, operation: 'trash'}, callback);
+GoogleDrive.prototype.trash = function(fileId, options, callback) {
+  this.sendFilesRequest_('POST', {fileId: fileId, operation: 'trash'}, callback);
 };
 
 /**
  * Restore a file or folder from the trash.
  * @param {string} fileId The file's id.
+ * @param {object} options
  * @param {callback} Called with the GoogleDriveEntry object representing
  *     the file.
  */
-GoogleDrive.prototype.untrash = function(fileId, callback) {
-  this.sendFilesRequest('POST', {fileId: fileId, operation: 'untrash'}, callback);
+GoogleDrive.prototype.untrash = function(fileId, options, callback) {
+  this.sendFilesRequest_('POST', {fileId: fileId, operation: 'untrash'},
+      callback);
 };
 
 /**
  * Permanently delete a file or a folder including everything in the folder
  * (even if some files also belong to other folders).
  * @param {string} fileId The file's id.
+ * @param {object} options
  * @param {callback} Called when the request is completed.
  */
-GoogleDrive.prototype.delete = function(fileId, callback) {
+GoogleDrive.prototype.remove = function(fileId, options, callback) {
   this.sendDriveRequest_('DELETE',
       this.DRIVE_API_FILES_BASE_URL + '/' + fileId, {}, function(xhr, error) {
     callback(error);
@@ -665,11 +690,12 @@ GoogleDrive.prototype.getChildren = function(parentId, options, callback) {
 };
 
 /**
+ * Get all files in the Google Drive account that satisfy all conditions given.
  * @param {object} options
  * @param {function} callback Called with GoogleDriveEntry objects.
  */
 GoogleDrive.prototype.getAll = function(options, callback) {
-  // TODO opt_options -> options/xhr_options.
+  // TODO: Support object-like filters and convert them to q.
   var list_options = {fields: ''};
   var xhr_options = {queryParameters: {}};
   if (options.q)
@@ -689,9 +715,10 @@ GoogleDrive.prototype.getAll = function(options, callback) {
 /**
  * Get basic information of this Drive account, including user information,
  * quota usage, latest change id, etc.
+ * @param {object} options
  * @param {function} callback Called with an About Resource.
  */
-GoogleDrive.prototype.getAccountInfo = function(callback) {
+GoogleDrive.prototype.getAccountInfo = function(options, callback) {
   this.sendDriveRequest_('GET', this.DRIVE_API_ABOUT_URL,
       {expectedStatus: [200]}, function(xhr, error) {
     if (error)
@@ -749,7 +776,22 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
   }.bind(this));
 };
 
+/**
+ * @typedef {CommonDriveOptions} GetChangesOptions
+ * @property {string} startChangeId Required. Change id to start listing change
+ *     from.
+ * @property {boolean} includeDeleted Whether to include deleted files.
+ * @property {boolean} includeSubscribed Whether to include files in 'Shared
+ *     with me'.
+ */
+
+/**
+ * Get a list of changes since the specified change id.
+ * @param {GetChangesOptions} options
+ */
 GoogleDrive.prototype.getChanges = function(options, callback) {
+  console.assert(options.startChangeId);
+
   var filesFields = this.getFilesFields_() || options.filesFields;
   if (filesFields)
     filesFields = 'file(' + filesFields + ')';
@@ -766,6 +808,7 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
     xhr_options.queryParameters.includeDeleted = 'false';
   if (options.includeSubscribed == false)
     xhr_options.queryParameters.includeSubscribed = 'false';
+
   this.sendListRequest_('GET',
                        this.DRIVE_API_CHANGES_BASE_URL,
                        {
@@ -784,7 +827,8 @@ var GoogleDriveEntry = function(details, drive) {
 
 GoogleDriveEntry.prototype.update = function(opt_metadata, opt_content,
     callback) {
-  this.drive_.update(this.details.id, null, opt_metadata, opt_content, callback);
+  this.drive_.update(this.details.id, null, opt_metadata, opt_content,
+      callback);
 };
 
 // TODO: Add options.range, etc.

@@ -785,16 +785,3 @@ function _() {
     console.log(__ = arguments);
 }
 var d = new GoogleDrive();
-
-function asyncForEach(items, operationCallback, resultCallback, results_) {
-  if (!results_)
-    results_ = [];
-
-  if (items[0])
-    operationCallback(items[0], function() {
-      results_.push(arguments);
-      asyncForEach(items.slice(1), operationCallback, resultCallback, results_);
-    });
-  else
-    resultCallback(results_);
-}

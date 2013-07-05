@@ -242,7 +242,8 @@ GoogleDrive.prototype.shallowCopy_ = function(object) {
  * @property {object} xhrError
  */
 
-GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options, callback) {
+GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
+    callback) {
   this.getToken_(function(token) {
     if (!token) {
       callback(null, {tokenError: {details: chrome.runtime.lastError}});
@@ -264,9 +265,10 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options, callbac
  * Send an API request to Google Drive that responds with a Files resource.
  * @param {string} method HTTP method.
  * @param {object} details
- * @param {function} callback Called with the returned GoogleDriveEntry.
+ * @param {function} opt_callback Called with the returned GoogleDriveEntry.
  */
-GoogleDrive.prototype.sendFilesRequest_ = function(method, details, callback) {
+GoogleDrive.prototype.sendFilesRequest_ = function(method, details,
+    opt_callback) {
   var url = this.DRIVE_API_FILES_BASE_URL;
   var xhr_details = {
     expectedStatus: [200],
@@ -294,10 +296,12 @@ GoogleDrive.prototype.sendFilesRequest_ = function(method, details, callback) {
     xhr_details.contentType = details.contentType;
 
   this.sendDriveRequest_(method, url, xhr_details, function(xhr, error) {
-    if (error)
-      callback(null, error);
-    else
-      callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
+    if (opt_callback) {
+      if (error)
+        opt_callback(null, error);
+      else
+        opt_callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
+    }
   }.bind(this));
 };
 
@@ -310,30 +314,30 @@ GoogleDrive.prototype.sendFilesRequest_ = function(method, details, callback) {
  *     metadata of the file. No metadata will be sent if omitted.
  * @param {Blob|File} opt_content The content of the file, represented as a
  *     Blob. No content will be sent if omitted.
- * @param {function} callback Called with the GoogleDriveEntry object.
+ * @param {function} opt_callback Called with the GoogleDriveEntry object.
  */
 GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
-    opt_metadata, opt_content, callback) {
+    opt_metadata, opt_content, opt_callback) {
   console.assert(opt_metadata || opt_content);
 
   if (opt_metadata && opt_content)
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
       this.sendResumableUploadRequest_(method, options, opt_metadata,
-          opt_content, callback);
+          opt_content, opt_callback);
     else
       this.sendMultipartUploadRequest_(method, options, opt_metadata,
-          opt_content, callback);
+          opt_content, opt_callback);
   else if (opt_metadata) {
     var filesRequestOptions = {
       body: JSON.stringify(opt_metadata)
     };
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
-    this.sendFilesRequest_(method, filesRequestOptions, callback);
+    this.sendFilesRequest_(method, filesRequestOptions, opt_callback);
   } else {
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
       this.sendResumableUploadRequest_('PUT', options, null, opt_content,
-          callback);
+          opt_callback);
     else {
       var filesRequestOptions = {
         uploadType: 'media',
@@ -344,7 +348,7 @@ GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
         filesRequestOptions.upload = options.upload;
       if (options.fileId)
         filesRequestOptions.fileId = options.fileId;
-      this.sendFilesRequest_(method, filesRequestOptions, callback);
+      this.sendFilesRequest_(method, filesRequestOptions, opt_callback);
     }
   }
 };
@@ -370,7 +374,7 @@ GoogleDrive.prototype.readBlob_ = function(blob, format, callback) {
 };
 
 GoogleDrive.prototype.sendMultipartUploadRequest_ = function(method, options,
-    metadata, content, callback) {
+    metadata, content, opt_callback) {
   this.readBlob_(content, 'base64', function(base64Data) {
     var filesRequestOptions = {
       upload: true,
@@ -393,13 +397,12 @@ GoogleDrive.prototype.sendMultipartUploadRequest_ = function(method, options,
 
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
-    this.sendFilesRequest_(method, filesRequestOptions, callback);
+    this.sendFilesRequest_(method, filesRequestOptions, opt_callback);
   }.bind(this));
 }
 
-// TODO
 GoogleDrive.prototype.sendResumableUploadRequest_ = function(method, options,
-    opt_metadata, content, callback) {
+    opt_metadata, content, opt_callback) {
   console.assert(content.size != 0);
   var xhrOptions = {
     queryParameters: {
@@ -421,23 +424,24 @@ GoogleDrive.prototype.sendResumableUploadRequest_ = function(method, options,
     url += '/' + options.fileId;
   this.sendDriveRequest_(method, url, xhrOptions,
       function(xhr, error) {
-    if (error)
-      callback(null, error);
-    else
+    if (error) {
+      if (opt_callback)
+        opt_callback(null, error);
+    } else
       this.startResumableUploadSession_(xhr.getResponseHeader('Location'),
-          options, content, callback);
+          options, content, opt_callback);
   }.bind(this));
 };
 
 GoogleDrive.prototype.startResumableUploadSession_ = function(sessionUrl,
-    options, content, callback) {
+    options, content, opt_callback) {
   var chunkSize = options.chunkSize || this.DEFAULT_UPLOAD_CHUNK_SIZE;
   // TODO: Persistent storage for interrupted uploads.
   this.pendingResumableUploads_[sessionUrl] = {
     sessionUrl: sessionUrl,
     chunkSize: chunkSize,
     content: content, 
-    callback: callback,
+    callback: opt_callback,
     currentOffset: 0,
     uploadedSize: 0
   };
@@ -461,7 +465,6 @@ GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
     expectedStatus: [200, 201, 308],
   }, function(xhr, error) {
     if (error) {
-      var callback = info.callback;
       if (xhr.status == 404) {
         // Upload cannot be resumed any more.
         delete this.pendingResumableUploads_[sessionUrl];
@@ -469,11 +472,14 @@ GoogleDrive.prototype.uploadNextChunk_ = function(sessionUrl) {
         error.resumeId = sessionUrl;
         info.interrupted = true;
       }
-      callback(null, error);
+      if (info.callback)
+        info.callback(null, error);
     } else if (xhr.status == '200' || xhr.status == '201') {
       // Upload is completed.
-      info.callback(new GoogleDriveEntry(JSON.parse(xhr.responseText),
-          this));
+      if (info.callback) {
+        info.callback(new GoogleDriveEntry(JSON.parse(xhr.responseText),
+            this));
+      }
     } else if (xhr.status == 308)
       this.processResumableUploadResponse_(sessionUrl, xhr, info);
   }.bind(this));
@@ -495,10 +501,12 @@ GoogleDrive.prototype.processResumableUploadResponse_ = function(sessionUrl,
   this.uploadNextChunk_(sessionUrl);
 };
 
-GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
+GoogleDrive.prototype.resumeUpload = function(resumeId, content,
+    opt_callback) {
   var info = this.pendingResumableUploads_[resumeId];
   if (!info) {
-    callback(null, {});
+    if (opt_callback)
+      opt_callback(null, {});
     return;
   }
   info.content = content;
@@ -509,11 +517,12 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content, callback) {
     if (error) {
       if (xhr.status == 404)
         delete this.pendingResumableUploads_[resumeId];
-      callback(null, error);
+      if (opt_callback)
+        opt_callback(null, error);
     } else if (xhr.status == 308)
       this.processResumableUploadResponse_(info.sessionUrl, xhr, info);
-    else
-      callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
+    else if (opt_callback)
+      opt_callback(new GoogleDriveEntry(JSON.parse(xhr.responseText), this));
   }.bind(this));
 };
 
@@ -594,10 +603,11 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
  * @param {object} metadata File metadata such as description, title, etc.
  * @param {Blob|File} content File content as a Blob.
  * @param {object} options
- * @param {function} callback Called to report progress and status.
+ * @param {function} opt_callback Called to report progress and status.
  */
-GoogleDrive.prototype.upload = function(metadata, content, options, callback) {
-  this.sendUploadRequest_('POST', {}, metadata, content, callback);
+GoogleDrive.prototype.upload = function(metadata, content, options,
+    opt_callback) {
+  this.sendUploadRequest_('POST', {}, metadata, content, opt_callback);
 };
 
 /**
@@ -620,18 +630,18 @@ GoogleDrive.prototype.get = function(fileId, options, callback) {
  *     with opt_content or opt_fullMetadata.
  * @param {Blob|File} opt_content The file's new content.
  * @param {object} options
- * @param {function} callback Called with the updated file's metadata.
+ * @param {function} opt_callback Called with the updated file's metadata.
  */
 GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
-    opt_metadataUpdates, opt_content, options, callback) {
+    opt_metadataUpdates, opt_content, options, opt_callback) {
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
   console.assert(!(opt_metadataUpdates && opt_content));
   if (opt_metadataUpdates)
     this.sendUploadRequest_('PATCH', {fileId: fileId},
-        opt_metadataUpdates, null, callback);
+        opt_metadataUpdates, null, opt_callback);
   else if (opt_content || opt_fullMetadata)
     this.sendUploadRequest_('PUT', {fileId: fileId, upload: true},
-        opt_fullMetadata, opt_content, callback);
+        opt_fullMetadata, opt_content, opt_callback);
 };
 
 /**
@@ -639,10 +649,10 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
  * @param {string} parentId The parent folder's id.
  * @param {string} title The folder's name.
  * @param {object} options
- * @param {function} callback Called with the created folder's metadata.
+ * @param {function} opt_callback Called with the created folder's metadata.
  */
 GoogleDrive.prototype.createFolder = function(parentId, title, options,
-    callback) {
+    opt_callback) {
   this.sendFilesRequest_('POST', {
     body: JSON.stringify({
       title: title,
@@ -650,51 +660,52 @@ GoogleDrive.prototype.createFolder = function(parentId, title, options,
       mimeType: this.DRIVE_FOLDER_MIME_TYPE,
       }), 
     fields: options.fields,
-  }, callback);
+  }, opt_callback);
 };
 
 /**
  * Move a file or folder to the trash.
  * @param {string} fileId The file's id.
  * @param {object} options
- * @param {callback} Called with the GoogleDriveEntry object representing
+ * @param {function} opt_callback Called with the GoogleDriveEntry object representing
  *     the file.
  */
-GoogleDrive.prototype.trash = function(fileId, options, callback) {
+GoogleDrive.prototype.trash = function(fileId, options, opt_callback) {
   var requestOptions = {
     fileId: fileId,
     operation: 'trash',
     fields: options.fields,
   };
-  this.sendFilesRequest_('POST', requestOptions, callback);
+  this.sendFilesRequest_('POST', requestOptions, opt_callback);
 };
 
 /**
  * Restore a file or folder from the trash.
  * @param {string} fileId The file's id.
  * @param {object} options
- * @param {callback} Called with the GoogleDriveEntry object representing
+ * @param {function} opt_callback Called with the GoogleDriveEntry object representing
  *     the file.
  */
-GoogleDrive.prototype.untrash = function(fileId, options, callback) {
+GoogleDrive.prototype.untrash = function(fileId, options, opt_callback) {
   var requestOptions = {
     fileId: fileId,
     operation: 'untrash',
     fields: options.fields,
   };
-  this.sendFilesRequest_('POST', requestOptions, callback);
+  this.sendFilesRequest_('POST', requestOptions, opt_callback);
 };
 
 /**
  * Permanently delete a file or a folder including everything in the folder
  * (even if some files also belong to other folders).
  * @param {string} fileId The file's id.
- * @param {callback} Called when the request is completed.
+ * @param {function} opt_callback Called when the request is completed.
  */
-GoogleDrive.prototype.remove = function(fileId, callback) {
+GoogleDrive.prototype.remove = function(fileId, opt_callback) {
   this.sendDriveRequest_('DELETE',
       this.DRIVE_API_FILES_BASE_URL + '/' + fileId, {}, function(xhr, error) {
-    callback(error);
+    if (opt_callback)
+      opt_callback(error);
   });
 };
 
@@ -787,10 +798,10 @@ GoogleDrive.prototype.getProperty = function(fileId, propertyKey, isPublic,
  * @param {string} propertyKey Property key.
  * @param {boolean} isPublic Whether this property is visible to all apps or
  *     only accessible to the app that creates it.
- * @param {function} callback Called with the property value.
+ * @param {function} opt_callback Called with the property value.
  */
 GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
-    value, callback) {
+    value, opt_callback) {
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId + '/properties';
   // properties.insert request works as expected even if the property
   // already exists.
@@ -800,10 +811,12 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
       visibility: isPublic ? 'PUBLIC' : 'PRIVATE'
   }), contentType: 'application/json',
       expectedStatus: [200]}, function(xhr, error) {
-    if (error)
-      callback(null, error);
-    else
-      callback(JSON.parse(xhr.responseText));
+    if (opt_callback) {
+      if (error)
+        opt_callback(null, error);
+      else
+        opt_callback(JSON.parse(xhr.responseText));
+    }
   }.bind(this));
 };
 

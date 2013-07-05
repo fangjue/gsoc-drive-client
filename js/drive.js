@@ -616,13 +616,15 @@ GoogleDrive.prototype.delete = function(fileId, callback) {
 /**
  * Get all children under a folder specified by |parentId|.
  * @param {string} parentId
- * @param {object} opt_options
+ * @param {object} options
  * @param {function} callback Called with child ids or GoogleDriveEntry objects.
  */
-GoogleDrive.prototype.getChildren = function(parentId, opt_options, callback) {
-  // TODO: opt_options. (populate)
-  // TODO: nextPageToken.
-  this.getAll({q: '\'' + parentId + '\' in parents'}, callback);
+GoogleDrive.prototype.getChildren = function(parentId, options, callback) {
+  // TODO: options. (populate)
+  var q = '\'' + parentId + '\' in parents';
+  if (options.q)
+    q = q + ' and ' + options.q;
+  this.getAll({q: q}, callback);
 };
 
 /**

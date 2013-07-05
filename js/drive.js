@@ -761,7 +761,7 @@ GoogleDrive.prototype.getAll = function(options, callback) {
     if (error)
       callback(null, error);
     else
-      callback(result, error);
+      callback(result.items, error);
   }.bind(this));
 };
 

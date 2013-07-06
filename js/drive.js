@@ -718,7 +718,9 @@ GoogleDrive.prototype.untrash = function(fileId, options, opt_callback) {
 
 /**
  * Permanently delete a file or a folder including everything in the folder
- * (even if some files also belong to other folders).
+ * (even if some files also belong to other folders). When deleting a folder,
+ * deletion of files inside the folder may be yet to finish when the callback
+ * is called.
  * @param {string} fileId The file's id.
  * @param {function} opt_callback Called when the request is completed.
  */

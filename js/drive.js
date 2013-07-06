@@ -44,8 +44,11 @@ var RequestSender = function() {
  *     Keys are HTTP header names and values are HTTP header values.
  * @property {HTTPRange} range HTTP Range header. Only |start| and |end|
  *     properties can be used here.
- * @property {string|Blob|File} body Request body that will be directly passed
- *     to XMLHttpRequest's send method.
+ * @property {string|Blob|File|object} body Request body that will be passed
+ *     to XMLHttpRequest's send method. If it's an Object, it will be
+ *     JSON-stringified, and the content type will be automatically set to
+ *     'application/json'. Other types (string|Blob|File) of body will be used
+ *     as is.
  * @property {MultipartBodyDetails} multipartBody Multipart request body
  *     content.
  * @property {Array.integer} expectedStatus Expected status codes returned
@@ -71,6 +74,12 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
   console.assert(!(details.contentType && details.multipartBody));
   console.assert(!(url.indexOf('?') != -1 &&
                    Object.keys(details.queryParametersi || {})).length > 0);
+  if (details.body) {
+    console.assert([String, Object, Blob, File].indexOf(
+        details.body.constructor) != -1);
+    console.assert(!(details.contentType &&
+                     details.body.constructor == Object));
+  }
 
   if (details.queryParameters && url.indexOf('?') == -1)
     url += this.generateQuery_(details.queryParameters);
@@ -83,8 +92,6 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
     xhr.responseType = details.responseType;
   if (details.authorization)
     xhr.setRequestHeader('Authorization', details.authorization);
-  if (details.contentType)
-    xhr.setRequestHeader('Content-Type', details.contentType);
 
   if (details.range)
     xhr.setRequestHeader('Range', this.getRangeHeader_(details.range));
@@ -95,12 +102,16 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
   }
 
   var requestBody = details.body;
-  if (details.multipartBody) {
+  if (requestBody && requestBody.constructor == Object) {
+    requestBody = JSON.stringify(requestBody);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+  } else if (details.multipartBody) {
     xhr.setRequestHeader('Content-Type', 'multipart/mixed; boundary="' +
         details.multipartBody.boundary + '"');
     requestBody = this.generateMultipartRequestBody_(
         details.multipartBody);
-  }
+  } else if (details.contentType)
+    xhr.setRequestHeader('Content-Type', details.contentType);
 
   if (details.headers) {
     Object.keys(details.headers).forEach(function(name) {
@@ -249,6 +260,8 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
     }
 
     options.authorization = 'Bearer ' + token;
+    if (!options.queryParameters)
+      options.queryParameters = {};
     options.queryParameters.prettyPrint = 'false';
     this.requestSender_.sendRequest(method, url, options, callback);
   }.bind(this));
@@ -283,8 +296,6 @@ GoogleDrive.prototype.sendFilesRequest_ = function(method, details,
     xhr_details.multipartBody = details.multipartBody;
   if (details.body)
     xhr_details.body = details.body;
-  if (!details.upload)
-    xhr_details.contentType = 'application/json';
   if (details.contentType)
     xhr_details.contentType = details.contentType;
 
@@ -322,7 +333,7 @@ GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
           opt_content, opt_callback);
   else if (opt_metadata) {
     var filesRequestOptions = {
-      body: JSON.stringify(opt_metadata)
+      body: opt_metadata
     };
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
@@ -409,8 +420,7 @@ GoogleDrive.prototype.sendResumableUploadRequest_ = function(method, options,
   };
 
   if (opt_metadata) {
-    xhrOptions.contentType = 'application/json';
-    xhrOptions.body = JSON.stringify(opt_metadata);
+    xhrOptions.body = opt_metadata;
   }
   var url = this.DRIVE_API_FILES_UPLOAD_URL;
   if (options.fileId)
@@ -665,11 +675,11 @@ GoogleDrive.prototype.download = function(downloadUrl, options, callback) {
 GoogleDrive.prototype.createFolder = function(parentId, title, options,
     opt_callback) {
   this.sendFilesRequest_('POST', {
-    body: JSON.stringify({
+    body: {
       title: title,
       parents: [{id: parentId}],
       mimeType: this.DRIVE_FOLDER_MIME_TYPE,
-      }), 
+      }, 
     fields: options.fields,
   }, opt_callback);
 };
@@ -814,12 +824,14 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId + '/properties';
   // properties.insert request works as expected even if the property
   // already exists.
-  this.sendDriveRequest_('POST', url, {body: JSON.stringify({
+  this.sendDriveRequest_('POST', url, {
+    body: {
       key: propertyKey,
       value: value,
-      visibility: isPublic ? 'PUBLIC' : 'PRIVATE'
-  }), contentType: 'application/json',
-      expectedStatus: [200]}, function(xhr, error) {
+      visibility: isPublic ? 'PUBLIC' : 'PRIVATE',
+    },
+    expectedStatus: [200],
+  }, function(xhr, error) {
     if (opt_callback) {
       if (error)
         opt_callback(null, error);

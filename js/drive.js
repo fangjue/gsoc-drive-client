@@ -651,7 +651,7 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
  */
 // TODO: Add options.range, etc.
 GoogleDrive.prototype.download = function(downloadUrl, options, callback) {
-  this.requestSender_.sendRequest('GET', downloadUrl, {
+  this.sendDriveRequest_('GET', downloadUrl, {
       responseType: 'blob',
       expectedStatus: [200, 206]
   }, function(xhr, error) {

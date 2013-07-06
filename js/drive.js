@@ -208,8 +208,6 @@ var GoogleDrive = function(opt_options) {
 
   this.requestSender_ = new RequestSender();
 
-  if (!opt_options.prettyPrint)
-    this.prettyPrint_ = 'false';
   this.fields_ = opt_options.fields || {};
 
   this.pendingResumableUploads_ = {};
@@ -251,12 +249,7 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
     }
 
     options.authorization = 'Bearer ' + token;
-
-    if (this.prettyPrint_)
-      if (!options.queryParameters)
-        options.queryParameters = {};
-      if (!options.queryParameters.prettyPrint)
-        options.queryParameters.prettyPrint = this.prettyPrint_;
+    options.queryParameters.prettyPrint = 'false';
     this.requestSender_.sendRequest(method, url, options, callback);
   }.bind(this));
 };

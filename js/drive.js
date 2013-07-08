@@ -691,14 +691,18 @@ GoogleDrive.prototype.download = function(downloadUrl, options, callback) {
  */
 GoogleDrive.prototype.createFolder = function(parentId, title, options,
     opt_callback) {
-  this.sendFilesRequest_('POST', {
-    body: {
-      title: title,
-      parents: [{id: parentId}],
-      mimeType: this.DRIVE_FOLDER_MIME_TYPE,
-      }, 
-    fields: options.fields,
-  }, opt_callback);
+  var metadata = {
+    title: title,
+    parents: [{id: parentId}],
+    mimeType: this.DRIVE_FOLDER_MIME_TYPE,
+  };
+
+  if (options.metadata)
+    for (var key in options.metadata)
+      metadata[key] = options.metadata[key];
+
+  this.sendFilesRequest_('POST', {body: metadata, fields: options.fields},
+      opt_callback);
 };
 
 /**

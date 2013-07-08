@@ -196,6 +196,7 @@ var GoogleDrive = function(opt_options) {
       'application/vnd.google-apps.folder';
 
   // Chunk sizes must be a multiple of 256 KB.
+  // Multiple requests for a single file count as one request.
   /** @const */ this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
 
   /** @const */ this.DRIVE_API_FILES_BASE_URL =
@@ -207,8 +208,11 @@ var GoogleDrive = function(opt_options) {
   /** @const */ this.DRIVE_API_ABOUT_URL =
       'https://www.googleapis.com/drive/v2/about';
 
-  // TODO: Figure out the best value for list requests.
   /** @const */ this.DRIVE_API_MAX_RESULTS = 1000;
+  // TODO: Figure out the best value for list requests.
+  // While larger values save request number quota, it's MUCH SLOWER than
+  // the total time of multiple requests.
+  /** @const */ this.DRIVE_API_PREFERRED_PAGE_SIZE = 100;
   // Files larger than 1 MB will use resumable upload.
   /** @const */ this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
 
@@ -542,29 +546,34 @@ GoogleDrive.prototype.resumeUpload = function(resumeId, content,
  */
 GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
     xhrOptions, callback, multiPageOptions_) {
-  var maxResults;
-  // TODO: Add maxResultsPerRequest (changes.list is likely to fail with
-  // maxResults == 1000).
-  if (options.maxResults)
-    maxResults = Math.min(options.maxResults, this.DRIVE_API_MAX_RESULTS);
+  console.assert((options.pageSize || 0 ) < this.DRIVE_API_MAX_RESULTS);
+  console.assert(!(options.oneTimeRequest &&
+                   (options.pageSize || options.maxResults)));
+  var pageSize;
+  if (options.pageSize)
+    pageSize = Math.min(options.pageSize,
+        options.maxResults || this.DRIVE_API_MAX_RESULTS);
   else
-    maxResults = this.DRIVE_API_MAX_RESULTS;
+    pageSize = this.DRIVE_API_PREFERRED_PAGE_SIZE;
 
   if (!xhrOptions.queryParameters)
     xhrOptions.queryParameters = {};
   // Some list requests doesn't support maxResults (eg. properties).
   if (!options.oneTimeRequest)
-    xhrOptions.queryParameters.maxResults = maxResults;
+    xhrOptions.queryParameters.maxResults = pageSize;
 
   var fields = '';
-  if (options.fields) {
+  if (options.fields)
     fields = options.fields;
-  }
+  else if (options.fields == '')
+    fields = 'nextPageToken';
+
   if (options.itemsFields) {
     if (fields)
       fields += ',';
     fields += 'items(' + options.itemsFields + ')';
   }
+
   if (fields) {
     // nextPageToken is required for multi-page list requests.
     if (fields.indexOf('nextPageToken') == -1 && !options.oneTimeRequest)
@@ -572,8 +581,12 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
     xhrOptions.queryParameters.fields = fields;
   }
 
-  if (!multiPageOptions_)
-    multiPageOptions_ = {responseSoFar: null};
+  if (!multiPageOptions_) {
+    multiPageOptions_ = {
+      responseSoFar: null,
+      nextPageToken: options.nextPageToken,
+    };
+  }
   if (multiPageOptions_.nextPageToken)
     xhrOptions.queryParameters.pageToken = multiPageOptions_.nextPageToken;
 
@@ -583,14 +596,18 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
     else {
       var response = JSON.parse(xhr.responseText);
       var items = response.items;
-      if (multiPageOptions_.responseSoFar)
+      if (multiPageOptions_.responseSoFar) {
         multiPageOptions_.responseSoFar.items =
             multiPageOptions_.responseSoFar.items.concat(items);
-      else
+        multiPageOptions_.responseSoFar.nextPageToken = response.nextPageToken;
+      } else {
         multiPageOptions_.responseSoFar = response;
-      if (options.maxResults || options.oneTimeRequest)
+      }
+
+      if ((options.maxResults && multiPageOptions_.responseSoFar.items.length >=
+          options.maxResults) || options.oneTimeRequest) {
         callback(multiPageOptions_.responseSoFar);
-      else if (response.nextPageToken) {
+      } else if (response.nextPageToken) {
         multiPageOptions_.nextPageToken = response.nextPageToken;
         this.sendListRequest_(method, url, options, xhrOptions, callback,
             multiPageOptions_);
@@ -756,11 +773,16 @@ GoogleDrive.prototype.getChildren = function(parentId, options, callback) {
  */
 GoogleDrive.prototype.getAll = function(options, callback) {
   // TODO: Support object-like filters and convert them to q.
-  var listOptions = {fields: ''};
+  var listOptions = {
+    fields: '',
+    pageSize: options.pageSize,
+    maxResults: options.maxResults,
+  };
   var xhrOptions = {queryParameters: {}};
   if (options.q)
     xhrOptions.queryParameters.q = options.q;
   listOptions.itemsFields = this.getFields_(options, 'files');
+
   this.sendListRequest_('GET', this.DRIVE_API_FILES_BASE_URL, listOptions,
       xhrOptions, function(result, error) {
     if (error)
@@ -865,6 +887,13 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
   else
     filesFields = 'file';
 
+  var listFields = {
+     fields: 'largestChangeId',
+     itemsFields: 'id,fileId,deleted,' + filesFields,
+     pageSize: options.pageSize,
+     maxResults: options.maxResults,
+  };
+
   var xhrOptions = {
     queryParameters: {
       startChangeId: options.startChangeId
@@ -876,14 +905,8 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
   if (options.includeSubscribed == false)
     xhrOptions.queryParameters.includeSubscribed = 'false';
 
-  this.sendListRequest_('GET',
-                       this.DRIVE_API_CHANGES_BASE_URL,
-                       {
-                         fields: 'largestChangeId',
-                         itemsFields: 'id,fileId,deleted,' + filesFields
-                       },
-                       xhrOptions,
-                       callback);
+  this.sendListRequest_('GET', this.DRIVE_API_CHANGES_BASE_URL, listFields,
+      xhrOptions, callback);
 };
 
 // For debugging.

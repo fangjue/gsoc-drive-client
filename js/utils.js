@@ -115,3 +115,29 @@ function strStripStart(str1, str2) {
   else
     return str1;
 }
+
+/**
+ * Invoke |callback| after specified number of milliseconds, trying to keep
+ * the event page alive. Useful when you need to retry a network request after
+ * a short period of time.
+ * @param {function} callback
+ * @param {integer} delay Number of milliseconds to wait before invoking
+ *     |callback|. If the delay is longer than a few seconds, please consider
+ *     using chrome.alarms instead of keeping the event page alive.
+ */
+function setTimeoutKeepAlive(callback, delay) {
+  // The default value is 10 seconds and can be overriden with a command line
+  // flag. For more information, Search for event_page_idle_time_ in
+  // chrome/browser/extensions/extension_process_manager.cc.
+  var EVENT_PAGE_IDLE_TIME = 5000;
+
+  // This magic extension API call makes sure the event page is not idle now
+  // and the idle time will be counted from now on.
+  chrome.storage.local.get('_', function() {
+    if (delay > EVENT_PAGE_IDLE_TIME) {
+      window.setTimeout(setTimeoutKeepAlive.bind(null, callback,
+          delay - EVENT_PAGE_IDLE_TIME), EVENT_PAGE_IDLE_TIME);
+    } else
+      window.setTimeout(callback, delay);
+  });
+}

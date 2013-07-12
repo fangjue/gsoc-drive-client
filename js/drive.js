@@ -235,6 +235,7 @@ var GoogleDrive = function(opt_options) {
   /** @const */ this.DRIVE_API_PREFERRED_PAGE_SIZE = 100;
   // Files larger than 1 MB will use resumable upload.
   /** @const */ this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
+  /** @const */ this.MAX_RETRY = 4;
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
     var startTime = new Date();
@@ -309,7 +310,7 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
         } catch(e) {
         }
 
-        if (drive_error)
+        if (driveError)
           error.driveError = driveError;
 
         if ((error.xhrError.status >= 500 && error.xhrError.status < 600) ||
@@ -317,15 +318,16 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
               return error.reason != 'rateLimitExceeded' &&
                      error.reason != 'userRateLimitExceeded';
             })) {
-          if (retryCount_)
+          if (retryCount_ != undefined)
             ++retryCount_;
           else
             retryCount_ = 0;
-          // TODO: Replace setTimeout with our own function to make sure the
-          // event page will keep alive while waiting to retry.
-          window.setTimeout(this.sendDriveRequest_.bind(this,
-              method, url, options, callback, retryCount_),
+          if (retryCount_ < this.MAX_RETRY) {
+            setTimeoutKeepAlive(this.sendDriveRequest_.bind(this,
+                method, url, options, callback, retryCount_),
               Math.round(Math.pow(2, retryCount_) + Math.random()) * 1000);
+            return; // Don't invoke the callback. The request is pending.
+          }
         }
       }
 

@@ -8,6 +8,8 @@
   "app": {
     "background": {
       "scripts": [
+        "js/utils.js",
+        "js/logging/logging.js",
         "js/drive.js",
         "js/bg.js"
       ]
@@ -40,10 +42,11 @@
   "permissions": [
     "alarms",
     "experimental",
-    {"fileSystem": ["write"]},
-    "fileSystemPrivate",
+    {"fileSystem": ["write", "retainFiles", "retainEntries"]},
     "identity",
+    "notifications",
     "storage",
+    "systemInfo.memory",
     "unlimitedStorage",
     "https://ssl.gstatic.com/",
     "https://www.googleapis.com/"

@@ -32,10 +32,86 @@ function asyncForEach(items, operationCallback, resultCallback, results_) {
  * accepts only one argument. When resultCallback is called, it is passed with
  * an array of that argument in each callback.
  */
-function asyncForEachSingleArgument(items, operationsCallback, resultCallback) {
+function asyncForEach1(items, operationsCallback, resultCallback) {
   asyncForEach(items, operationsCallback, function(results) {
     resultCallback(results.map(function(args) {
       return args[0];
     }));
   });
+}
+
+/**
+ * Execute callback(key, value) on the given dictionary's each item.
+ * @param {object} dict
+ * @param {function} callback
+ */
+function dictForEach(dict, callback) {
+  for (var key in dict)
+    callback(key, dict[key]);
+}
+
+/**
+ * Get a single item from the chrome.storage API and pass the value in the
+ * callback.
+ * @param {StorageArea} storageArea Either 'local' or 'sync'.
+ * @param {string|Object} key_or_dict
+ * @param {function} callback
+ */
+function storageGetItem(storageArea, key_or_dict, callback) {
+  chrome.storage[storageArea].get(key_or_dict, function(items) {
+		if (typeof key_or_dict == 'object')
+			key_or_dict = Object.keys(key_or_dict)[0];
+    callback(items[key_or_dict]);
+  });
+}
+
+/**
+ * Set a single item from the chrome.storage API.
+ * @param {StorageArea} storageArea Either 'local' or 'sync'.
+ * @param {string} key
+ * @param {any} value
+ * @param {function} callback
+ */
+function storageSetItem(storageArea, key, value, callback) {
+	var items = {};
+	items[key] = value;
+  chrome.storage[storageArea].set(items, callback);
+}
+
+/**
+ * Invoke a set of asynchronous functions with only a callback parameter in
+ * parallel and finally return results when all these functions are completed.
+ * @param {Array.function} operations An array of functions that look like:
+ *     function(callback) {...}
+ * @param {function} callback Called when all functions are completed, with
+ *     an array of |arguments| passed to each function's callback.
+ */
+function waitAsync(operations, callback) {
+  var status = [];
+  var results = [];
+  for (var i = 0; i < operations.length; ++i) {
+    operations[i](function(i) {
+      // arguments[i], namely |i| should be omitted.
+      results[i] = Array.prototype.slice.call(arguments, 1);
+      status[i] = true;
+
+      for (var i = 0; i < operations.length; ++i)
+        if (!status[i])
+          return; // Return from this callback.
+
+      // All operations are done now.
+      callback(results);
+    }.bind(this, i));
+  }
+}
+
+function strStartsWith(str1, str2) {
+  return str1.substr(0, str2.length) == str2;
+}
+
+function strStripStart(str1, str2) {
+  if (strStartsWith(str1, str2))
+    return str1.substr(str2.length);
+  else
+    return str1;
 }

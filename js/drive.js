@@ -5,7 +5,12 @@
 
 'use strict';
 
+log.registerSource('RequestSender');
+log.registerSource('chromeIdentity');
+
 var RequestSender = function() {
+  this.pendingRequests_ = [];
+
   return this;
 };
 
@@ -85,6 +90,7 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
     url += this.generateQuery_(details.queryParameters);
 
   var xhr = new XMLHttpRequest();
+  var pendingRequest = {xhr: xhr, method: method, url: url};
   // TODO: onprogress, upload.onprogress
 
   xhr.open(method, url, true);
@@ -121,6 +127,12 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
 
   xhr.onreadystatechange = function() {
     if (xhr.readyState == XMLHttpRequest.DONE) {
+      pendingRequest.endTime = new Date();
+      this.logRequest_(pendingRequest);
+      var index = this.pendingRequests_.indexOf(pendingRequest);
+      if (index != -1)
+        this.pendingRequests_.splice(index, 1);
+
       var error = false;
       if (details.expectedStatus) {
         if (details.expectedStatus.indexOf(xhr.status) == -1)
@@ -136,9 +148,17 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
         callback(xhr);
       xhr = null;
     }
-  };
+  }.bind(this);
 
+  pendingRequest.startTime = new Date();
   xhr.send(requestBody);
+  this.pendingRequests_.push(pendingRequest);
+};
+
+RequestSender.prototype.logRequest_ = function(pendingRequest) {
+  log.RequestSender.debug(pendingRequest.method,
+                          pendingRequest.url,
+                          pendingRequest.endTime - pendingRequest.startTime);
 };
 
 RequestSender.prototype.getRangeHeader_ = function(range) {
@@ -217,8 +237,13 @@ var GoogleDrive = function(opt_options) {
   /** @const */ this.RESUMABLE_UPLOAD_THRESHOLD = 1024 * 1024;
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
+    var startTime = new Date();
     (chrome.identity || chrome.experimental.identity).getAuthToken(
-        {}, callback);
+        {}, function(token) {
+      log.chromeIdentity.info(chrome.identity ? 'stable' : 'experimental',
+                              new Date() - startTime);
+      callback(token);
+    });
   };
 
   this.requestSender_ = new RequestSender();

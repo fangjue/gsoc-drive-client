@@ -280,8 +280,16 @@ GoogleDrive.prototype.shallowCopy_ = function(object) {
  * @property {object} xhrError
  */
 
+/**
+ * Send a Google Drive API request.
+ * @param {string} method Standard HTTP method.
+ * @param {string} url The URL of the request.
+ * @param {object} options The options of the request.
+ * @param {function} callback Called with the result.
+ * @param {object} retryCount_ Used internally for expoential backoff.
+ */
 GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
-    callback) {
+    callback, retryCount_) {
   this.getToken_(function(token) {
     if (!token) {
       callback(null, {tokenError: {details: chrome.runtime.lastError}});
@@ -292,7 +300,37 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
     if (!options.queryParameters)
       options.queryParameters = {};
     options.queryParameters.prettyPrint = 'false';
-    this.requestSender_.sendRequest(method, url, options, callback);
+    this.requestSender_.sendRequest(method, url, options,
+        function (xhr, error) {
+      if (error && error.xhrError) {
+        var driveError;
+        try {
+          driveError = JSON.parse(error.xhrError.response).error;
+        } catch(e) {
+        }
+
+        if (drive_error)
+          error.driveError = driveError;
+
+        if ((error.xhrError.status >= 500 && error.xhrError.status < 600) ||
+            !driveError.errors.every(function(error) {
+              return error.reason != 'rateLimitExceeded' &&
+                     error.reason != 'userRateLimitExceeded';
+            })) {
+          if (retryCount_)
+            ++retryCount_;
+          else
+            retryCount_ = 0;
+          // TODO: Replace setTimeout with our own function to make sure the
+          // event page will keep alive while waiting to retry.
+          window.setTimeout(this.sendDriveRequest_.bind(this,
+              method, url, options, callback, retryCount_),
+              Math.round(Math.pow(2, retryCount_) + Math.random()) * 1000);
+        }
+      }
+
+      callback(xhr, error);
+    }.bind(this));
   }.bind(this));
 };
 

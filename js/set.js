@@ -108,6 +108,8 @@ Set.prototype.intersect = function(that) {
     if (!that.contains(item))
       result.remove(item);
   });
+
+  return result;
 };
 
 /**
@@ -119,4 +121,12 @@ Set.prototype.minus = function(that) {
   var result = this.clone();
   Set.prototype.remove.apply(result, that.toArray());
   return result;
+};
+
+/**
+ * Shorthand of set.toArray().forEach(...).
+ * @param {function} callback See also Array.prototype.forEach.
+ */
+Set.prototype.forEach = function() {
+  Array.prototype.forEach.apply(this.toArray(), arguments);
 };

@@ -2,6 +2,19 @@
  * Invoke operationCallback(item, itemResultCallback) on every item in series.
  * All the arguments passed to each itemResultCallback call are preserved and
  * finally returned by calling resultCallback.
+ * Sample:
+ * asyncForEach(items, function(item, callback) {
+ *   doSomethingAsync(item, function(result1, result2) {
+ *     // Invoke |callback| to notify that the operation on this item is
+ *     // completed.
+ *     callback(result1, result2);
+ *   });
+ * }, function(results) {
+ *   // Everything is done here. Extract results now.
+ *   var result1Array = results.map(function(args) {return args[0];});
+ *   var result2Array = results.map(function(args) {return args[1];});
+ *   // ...
+ * });
  * @param {Array} items
  * @param {function} operationCallback Must specify a function that looks like:
  *     function(item, callback) {...}
@@ -21,7 +34,8 @@ function asyncForEach(items, operationCallback, resultCallback, results_) {
   if (items[0])
     operationCallback(items[0], function() {
       results_.push(arguments);
-      asyncForEach(items.slice(1), operationCallback, resultCallback, results_);
+      asyncForEach(Array.prototype.slice.call(items, 1),
+          operationCallback, resultCallback, results_);
     });
   else
     resultCallback(results_);
@@ -48,6 +62,21 @@ function asyncForEach1(items, operationsCallback, resultCallback) {
 function dictForEach(dict, callback) {
   for (var key in dict)
     callback(key, dict[key]);
+}
+
+/**
+ * Return a new dictionary with values mapped by the specified callback.
+ * @param {object} dict
+ * @param {function} callback This function takes item keys and values as
+ *     parameters, and returns mapped item values.
+ * @returns {object} The new dictionary.
+ */
+function dictMapValue(dict, callback) {
+  var newDict = {};
+  dictForEach(dict, function(key, value) {
+    newDict[key] = callback(key, value);
+  });
+  return newDict;
 }
 
 /**

@@ -12,6 +12,7 @@ function RemoteEntry(metadata) {
 var RemoteFiles = {
   STORAGE_LARGEST_CHANGE_ID: 'remote.largestChangeId',
   STORAGE_IDS: 'remote.ids',
+  STORAGE_PENDING_CHANGES: 'remote.pendingChanges',
   STORAGE_ENTRY_PREFIX: 'remote.entry.',
 };
 
@@ -19,8 +20,11 @@ RemoteFiles.load = function(callback) {
   var items = {};
   items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID] = 0;
   items[RemoteFiles.STORAGE_IDS] = [];
+  items[RemoteFiles.STORAGE_PENDING_CHANGES] = [];
+  items[RemoteFiles.STORAGE_LAST_KNOWN_CHANGE] = null;
   chrome.storage.local.get(items, function(items) {
     RemoteFiles.largestChangeId = items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID];
+    RemoteFiles.pendingChanges = items[RemoteFiles.STORAGE_PENDING_CHANGES];
     chrome.storage.local.get(items[RemoteFiles.STORAGE_IDS].map(function(id) {
       return RemoteFiles.STORAGE_ENTRY_PREFIX + id;
     }), function(idEntryMap) {
@@ -31,6 +35,7 @@ RemoteFiles.load = function(callback) {
       RemoteFiles.findChildren();
       callback({
         largestChangeId: RemoteFiles.largestChangeId,
+        pendingChanges: RemoteFiles.pendingChanges,
         idEntryMap: RemoteFiles.idEntryMap,
         idChildrenMap: RemoteFiles.idChildrenMap
       });
@@ -45,6 +50,7 @@ RemoteFiles.update = function(callback) {
   });
   items[RemoteFiles.STORAGE_IDS] = Object.keys(RemoteFiles.idEntryMap);
   items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID] = RemoteFiles.largestChangeId;
+  items[RemoteFiles.STORAGE_PENDING_CHANGES] = RemoteFiles.pendingChanges;
   chrome.storage.local.set(items, callback);
 };
 
@@ -104,5 +110,25 @@ RemoteFiles.scan = function(callback) {
         idChildrenMap: RemoteFiles.idChildrenMap,
       });
     });
+  });
+};
+
+RemoteFiles.getChanges = function(callback) {
+  drive.getChanges({startChangeId: parseInt(RemoteFiles.largestChangeId) + 1,
+      includeSubscribed: false}, function(changes, error) {
+    if (changes) {
+      if (changes.items.length > 0) {
+        var firstChange = changes.items[0];
+        var lastChange = changes.items[changes.items.length - 1];
+        RemoteFiles.pendingChanges = RemoteFiles.pendingChanges.concat(
+            changes.items);
+      }
+      RemoteFiles.largestChangeId = changes.largestChangeId;
+      callback({
+        largestChangeId: RemoteFiles.largestChangeId,
+        pendingChanges: RemoteFiles.pendingChanges,
+      });
+    } else
+      callback(null, error);
   });
 };

@@ -713,11 +713,11 @@ GoogleDrive.prototype.get = function(fileId, options, callback) {
  *     containing fields that need to be updated. This parameter cannot be used
  *     with opt_content or opt_fullMetadata.
  * @param {Blob|File} opt_content The file's new content.
- * @param {object} options
+ * @param {object} opt_options
  * @param {function} opt_callback Called with the updated file's metadata.
  */
 GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
-    opt_metadataUpdates, opt_content, options, opt_callback) {
+    opt_metadataUpdates, opt_content, opt_options, opt_callback) {
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
   console.assert(!(opt_metadataUpdates && opt_content));
   if (opt_metadataUpdates)
@@ -938,14 +938,16 @@ GoogleDrive.prototype.setProperty = function(fileId, propertyKey, isPublic,
  * @typedef {CommonDriveOptions} GetChangesOptions
  * @property {string} startChangeId Required. Change id to start listing change
  *     from.
- * @property {boolean} includeDeleted Whether to include deleted files.
+ * @property {boolean} includeDeleted Whether to include deleted files. The
+ *     default value is true.
  * @property {boolean} includeSubscribed Whether to include files in 'Shared
- *     with me'.
+ *     with me'. The default value is true.
  */
 
 /**
  * Get a list of changes since the specified change id.
  * @param {GetChangesOptions} options
+ * @param {function} callback
  */
 GoogleDrive.prototype.getChanges = function(options, callback) {
   console.assert(options.startChangeId);

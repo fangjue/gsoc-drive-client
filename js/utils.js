@@ -65,6 +65,23 @@ function dictForEach(dict, callback) {
 }
 
 /**
+ * Return a new dictionary with both keys and values mapped by the specified
+ * callback.
+ * @param {object} dict
+ * @param {function} callback This function takes item keys and values as
+ *     parameters, and returns [<new key>, <new value>].
+ * @returns {object} The new dictionary.
+ */
+function dictMap(dict, callback) {
+  var newDict = {};
+  dictForEach(dict, function(key, value) {
+    var result = callback(key, value);
+    newDict[result[0]] = result[1];
+  });
+  return newDict;
+}
+
+/**
  * Return a new dictionary with values mapped by the specified callback.
  * @param {object} dict
  * @param {function} callback This function takes item keys and values as
@@ -72,11 +89,22 @@ function dictForEach(dict, callback) {
  * @returns {object} The new dictionary.
  */
 function dictMapValue(dict, callback) {
-  var newDict = {};
-  dictForEach(dict, function(key, value) {
-    newDict[key] = callback(key, value);
+  return dictMap(dict, function(key, value) {
+    return [key, callback(key, value)];
   });
-  return newDict;
+}
+
+/**
+ * Return a new dictionary with keys mapped by the specified callback.
+ * @param {object} dict
+ * @param {function} callback This function takes item keys and values as
+ *     parameters, and returns mapped item values.
+ * @returns {object} The new dictionary.
+ */
+function dictMapValue(dict, callback) {
+  return dictMap(dict, function(key, value) {
+    return [callback(key, value), value];
+  });
 }
 
 /**

@@ -25,18 +25,30 @@ LocalEntry.prototype.toStorage = function() {
 LocalEntry.fromStorage = function(path, metadata) {
   var result = new LocalEntry();
   result.path = path;
-  result.metadata = new Date(metadata);
+  // TODO: Do we need a deep copy here?
+  result.metadata = metadata;
+  if (metadata.modifiedTime)
+    result.metadata.modifiedTime = new Date(result.metadata.modifiedTime);
+  return result;
 };
 
-var LocalFiles = {};
+var LocalFiles = {
+  STORAGE_FILES: 'local.files',
+  STORAGE_ENTRY_PREFIX: 'local.entry.',
+};
 
 LocalFiles.load = function(callback) {
-  storageGetItem('local', {'local.files': []}, function(paths) {
+  var items = {};
+  items[LocalFiles.STORAGE_FILES] = [];
+  storageGetItem('local', items, function(paths) {
     LocalFiles.paths = paths;
-    chrome.storage.local.get(paths, function(pathEntryMap) {
-      LocalFiles.pathEntryMap = dictMapValue(pathEntryMap,
+    chrome.storage.local.get(paths.map(function(path) {
+      return LocalFiles.STORAGE_ENTRY_PREFIX + path;
+    }), function(pathEntryMap) {
+      LocalFiles.pathEntryMap = dictMap(pathEntryMap,
           function(path, entry) {
-        return LocalEntry.fromStorage(path, entry);
+        var realPath = strStripStart(path, LocalFiles.STORAGE_ENTRY_PREFIX);
+        return [realPath, LocalEntry.fromStorage(realPath, entry)];
       });
       callback(LocalFiles.pathEntryMap);
     });
@@ -44,10 +56,11 @@ LocalFiles.load = function(callback) {
 };
 
 LocalFiles.update = function(opt_callback) {
-  chrome.storage.local.set(dictMapValue(LocalFiles.pathEntryMap,
-      function(path, entry) {
-    return entry.toStorage();
-  }), opt_callback);
+  var items = dictMap(LocalFiles.pathEntryMap, function(path, entry) {
+    return [LocalFiles.STORAGE_ENTRY_PREFIX + path, entry.toStorage()];
+  });
+  items[LocalFiles.STORAGE_FILES] = Object.keys(LocalFiles.pathEntryMap);
+  chrome.storage.local.set(items, opt_callback);
 };
 
 LocalFiles.stripBasePath_ = function(fullPath, basePath) {
@@ -115,10 +128,12 @@ LocalFiles.compare = function(pathEntryMap) {
     var currentEntry = pathEntryMap[path];
     var knownEntry = LocalFiles.pathEntryMap[path];
     console.assert(currentEntry.metadata && knownEntry.metadata);
-    if (currentEntry.size != undefined &&
-        (currentEntry.size != knownEntry.size ||
-         currentEntry.modifiedTime != knownEntry.modifiedTime))
+    if (currentEntry.metadata.size != undefined) {
+      if (currentEntry.metadata.size != knownEntry.metadata.size ||
+          currentEntry.metadata.modifiedTime.getTime() !=
+              knownEntry.metadata.modifiedTime.getTime())
       modifiedPaths.add(path);
+    }
   });
 
   return {

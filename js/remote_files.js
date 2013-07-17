@@ -9,126 +9,128 @@ function RemoteEntry(metadata) {
   return this;
 };
 
-var RemoteFiles = {
-  STORAGE_LARGEST_CHANGE_ID: 'remote.largestChangeId',
-  STORAGE_IDS: 'remote.ids',
-  STORAGE_PENDING_CHANGES: 'remote.pendingChanges',
-  STORAGE_ENTRY_PREFIX: 'remote.entry.',
+var RemoteFileManager = function(drive) {
+  this.drive_ = drive;
+  /** @const */ this.STORAGE_LARGEST_CHANGE_ID = 'remote.largestChangeId';
+  /** @const */ this.STORAGE_IDS = 'remote.ids';
+  /** @const */ this.STORAGE_PENDING_CHANGES = 'remote.pendingChanges';
+  /** @const */ this.STORAGE_ENTRY_PREFIX = 'remote.entry.';
 };
 
-RemoteFiles.load = function(callback) {
+RemoteFileManager.prototype.load = function(callback) {
   var items = {};
-  items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID] = 0;
-  items[RemoteFiles.STORAGE_IDS] = [];
-  items[RemoteFiles.STORAGE_PENDING_CHANGES] = [];
-  items[RemoteFiles.STORAGE_LAST_KNOWN_CHANGE] = null;
+  items[this.STORAGE_LARGEST_CHANGE_ID] = 0;
+  items[this.STORAGE_IDS] = [];
+  items[this.STORAGE_PENDING_CHANGES] = [];
+  items[this.STORAGE_LAST_KNOWN_CHANGE] = null;
   chrome.storage.local.get(items, function(items) {
-    RemoteFiles.largestChangeId = items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID];
-    RemoteFiles.pendingChanges = items[RemoteFiles.STORAGE_PENDING_CHANGES];
-    chrome.storage.local.get(items[RemoteFiles.STORAGE_IDS].map(function(id) {
-      return RemoteFiles.STORAGE_ENTRY_PREFIX + id;
-    }), function(idEntryMap) {
-      RemoteFiles.idEntryMap = dictMap(idEntryMap, function(id, entry) {
-        return [strStripStart(id, RemoteFiles.STORAGE_ENTRY_PREFIX),
+    this.largestChangeId = items[this.STORAGE_LARGEST_CHANGE_ID];
+    this.pendingChanges = items[this.STORAGE_PENDING_CHANGES];
+    chrome.storage.local.get(items[this.STORAGE_IDS].map(function(id) {
+      return this.STORAGE_ENTRY_PREFIX + id;
+    }.bind(this)), function(idEntryMap) {
+      this.idEntryMap = dictMap(idEntryMap, function(id, entry) {
+        return [strStripStart(id, this.STORAGE_ENTRY_PREFIX),
                 new RemoteEntry(entry)];
-      });
-      RemoteFiles.findChildren();
+      }.bind(this));
+      this.findChildren();
       callback({
-        largestChangeId: RemoteFiles.largestChangeId,
-        pendingChanges: RemoteFiles.pendingChanges,
-        idEntryMap: RemoteFiles.idEntryMap,
-        idChildrenMap: RemoteFiles.idChildrenMap
+        largestChangeId: this.largestChangeId,
+        pendingChanges: this.pendingChanges,
+        idEntryMap: this.idEntryMap,
+        idChildrenMap: this.idChildrenMap
       });
-    });
-  });
+    }.bind(this));
+  }.bind(this));
 };
 
-RemoteFiles.update = function(callback) {
-  var items = dictMap(RemoteFiles.idEntryMap, function(id, entry) {
-    return [RemoteFiles.STORAGE_ENTRY_PREFIX + id,
+RemoteFileManager.prototype.update = function(callback) {
+  var items = dictMap(this.idEntryMap, function(id, entry) {
+    return [this.STORAGE_ENTRY_PREFIX + id,
             entry.metadata];
-  });
-  items[RemoteFiles.STORAGE_IDS] = Object.keys(RemoteFiles.idEntryMap);
-  items[RemoteFiles.STORAGE_LARGEST_CHANGE_ID] = RemoteFiles.largestChangeId;
-  items[RemoteFiles.STORAGE_PENDING_CHANGES] = RemoteFiles.pendingChanges;
+  }.bind(this));
+  items[this.STORAGE_IDS] = Object.keys(this.idEntryMap);
+  items[this.STORAGE_LARGEST_CHANGE_ID] = this.largestChangeId;
+  items[this.STORAGE_PENDING_CHANGES] = this.pendingChanges;
   chrome.storage.local.set(items, callback);
 };
 
-RemoteFiles.findChildren = function() {
+RemoteFileManager.prototype.findChildren = function() {
   var excludedIds = [];
-  RemoteFiles.idChildrenMap = {};
-  dictForEach(RemoteFiles.idEntryMap, function(id, entry) {
+  this.idChildrenMap = {};
+  dictForEach(this.idEntryMap, function(id, entry) {
     if (entry.metadata.parents) {
       if (entry.metadata.parents.length == 0)
         excludedIds.push(entry.metadata.id);
 
       entry.metadata.parents.forEach(function(parent) {
         var id = parent.isRoot ? 'root' : parent.id;
-        if (RemoteFiles.idChildrenMap[id])
-          RemoteFiles.idChildrenMap[id].push(entry);
+        if (this.idChildrenMap[id])
+          this.idChildrenMap[id].push(entry);
         else
-          RemoteFiles.idChildrenMap[id] = [entry];
-      });
+          this.idChildrenMap[id] = [entry];
+      }.bind(this));
     }
-  });
+  }.bind(this));
 
   // This removes folders without parents, such as Chrome Syncable Filesystem.
-  excludedIds.forEach(RemoteFiles.removeEntries);
+  excludedIds.forEach(this.removeEntries.bind(this));
 };
 
-RemoteFiles.removeEntries = function(id) {
-  (RemoteFiles.idChildrenMap[id] || []).forEach(RemoteFiles.removeEntries);
-  delete RemoteFiles.idChildrenMap[id];
-  delete RemoteFiles.idEntryMap[id];
+RemoteFileManager.prototype.removeEntries = function(id) {
+  (this.idChildrenMap[id] || []).forEach(this.removeEntries.bind(this));
+  delete this.idChildrenMap[id];
+  delete this.idEntryMap[id];
 };
 
 /**
  * Scan remote files inside My Drive.
  * @param {function} callback Called with the result.
  */
-RemoteFiles.scan = function(callback) {
-  drive.getAccountInfo({fields: 'largestChangeId'}, function(info, error) {
+RemoteFileManager.prototype.scan = function(callback) {
+  this.drive_.getAccountInfo({fields: 'largestChangeId'},
+      function(info, error) {
     if (!info) {
       callback(null, error);
       return;
     }
 
-    RemoteFiles.largestChangeId = info.largestChangeId;
+    this.largestChangeId = info.largestChangeId;
 
-    drive.getAll({q: '\'me\' in owners and trashed = false'},
+    this.drive_.getAll({q: '\'me\' in owners and trashed = false'},
         function(files) {
-      RemoteFiles.idEntryMap = {};
+      this.idEntryMap = {};
       files.forEach(function(entry) {
-        RemoteFiles.idEntryMap[entry.id] = new RemoteEntry(entry);
-      });
+        this.idEntryMap[entry.id] = new RemoteEntry(entry);
+      }.bind(this));
 
-      RemoteFiles.findChildren();
+      this.findChildren();
 
       callback({
-        largestChangeId: RemoteFiles.largestChangeId,
-        idEntryMap: RemoteFiles.idEntryMap,
-        idChildrenMap: RemoteFiles.idChildrenMap,
+        largestChangeId: this.largestChangeId,
+        idEntryMap: this.idEntryMap,
+        idChildrenMap: this.idChildrenMap,
       });
-    });
-  });
+    }.bind(this));
+  }.bind(this));
 };
 
-RemoteFiles.getChanges = function(callback) {
-  drive.getChanges({startChangeId: parseInt(RemoteFiles.largestChangeId) + 1,
+RemoteFileManager.prototype.getChanges = function(callback) {
+  this.drive_.getChanges({startChangeId: parseInt(this.largestChangeId) + 1,
       includeSubscribed: false}, function(changes, error) {
     if (changes) {
       if (changes.items.length > 0) {
         var firstChange = changes.items[0];
         var lastChange = changes.items[changes.items.length - 1];
-        RemoteFiles.pendingChanges = RemoteFiles.pendingChanges.concat(
+        this.pendingChanges = this.pendingChanges.concat(
             changes.items);
       }
-      RemoteFiles.largestChangeId = changes.largestChangeId;
+      this.largestChangeId = changes.largestChangeId;
       callback({
-        largestChangeId: RemoteFiles.largestChangeId,
-        pendingChanges: RemoteFiles.pendingChanges,
+        largestChangeId: this.largestChangeId,
+        pendingChanges: this.pendingChanges,
       });
     } else
       callback(null, error);
-  });
+  }.bind(this));
 };

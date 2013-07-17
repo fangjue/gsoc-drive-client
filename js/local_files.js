@@ -32,38 +32,60 @@ LocalEntry.fromStorage = function(path, metadata) {
   return result;
 };
 
-var LocalFiles = {
-  STORAGE_FILES: 'local.files',
-  STORAGE_ENTRY_PREFIX: 'local.entry.',
+var LocalFileManager = function() {
+  /** @const */ this.STORAGE_FILES = 'local.files';
+  /** @const */ this.STORAGE_ENTRY_PREFIX = 'local.entry.';
+  return this;
 };
 
-LocalFiles.load = function(callback) {
+LocalFileManager.prototype.load = function(callback) {
   var items = {};
-  items[LocalFiles.STORAGE_FILES] = [];
+  items[this.STORAGE_FILES] = [];
   storageGetItem('local', items, function(paths) {
-    LocalFiles.paths = paths;
+    this.paths = paths;
     chrome.storage.local.get(paths.map(function(path) {
-      return LocalFiles.STORAGE_ENTRY_PREFIX + path;
-    }), function(pathEntryMap) {
-      LocalFiles.pathEntryMap = dictMap(pathEntryMap,
+      return this.STORAGE_ENTRY_PREFIX + path;
+    }.bind(this)), function(pathEntryMap) {
+      this.pathEntryMap = dictMap(pathEntryMap,
           function(path, entry) {
-        var realPath = strStripStart(path, LocalFiles.STORAGE_ENTRY_PREFIX);
+        var realPath = strStripStart(path, this.STORAGE_ENTRY_PREFIX);
         return [realPath, LocalEntry.fromStorage(realPath, entry)];
-      });
-      callback(LocalFiles.pathEntryMap);
-    });
-  });
+      }.bind(this));
+      this.pathChildrenMap = this.findChildren(this.pathEntryMap);
+      callback(this.pathEntryMap);
+    }.bind(this));
+  }.bind(this));
 };
 
-LocalFiles.update = function(opt_callback) {
-  var items = dictMap(LocalFiles.pathEntryMap, function(path, entry) {
-    return [LocalFiles.STORAGE_ENTRY_PREFIX + path, entry.toStorage()];
-  });
-  items[LocalFiles.STORAGE_FILES] = Object.keys(LocalFiles.pathEntryMap);
+LocalFileManager.prototype.findChildren = function(pathEntryMap,
+    pathChildrenMap_, base_) {
+  var paths = Object.keys(pathEntryMap);
+  var pathChildrenMap = pathChildrenMap_ || {};
+  var base = base_ || '';
+  paths.filter(function(path) {
+    return strStartsWith(path, base) &&
+        strStripStart(path, base).indexOf('/') == -1;
+  }).forEach(function(path) {
+    if (pathChildrenMap[base])
+      pathChildrenMap[base].push(path);
+    else
+      pathChildrenMap[base] = [path];
+    if (pathEntryMap[path].metadata.isDirectory)
+      this.findChildren(pathEntryMap, pathChildrenMap, path + '/');
+  }.bind(this));
+  this.pathChildrenMap = pathChildrenMap;
+  return pathChildrenMap;
+};
+
+LocalFileManager.prototype.update = function(opt_callback) {
+  var items = dictMap(this.pathEntryMap, function(path, entry) {
+    return [this.STORAGE_ENTRY_PREFIX + path, entry.toStorage()];
+  }.bind(this));
+  items[this.STORAGE_FILES] = Object.keys(this.pathEntryMap);
   chrome.storage.local.set(items, opt_callback);
 };
 
-LocalFiles.stripBasePath_ = function(fullPath, basePath) {
+LocalFileManager.prototype.stripBasePath_ = function(fullPath, basePath) {
   basePath += '/';
   if (fullPath.substr(0, basePath.length) == basePath)
     return fullPath.substr(basePath.length);
@@ -78,13 +100,15 @@ LocalFiles.stripBasePath_ = function(fullPath, basePath) {
  * @param {object} pathEntryMap_
  * @param {DirectoryEntry} base_
  */
-LocalFiles.scan = function(root, callback, pathEntryMap_, base_) {
+LocalFileManager.prototype.scan = function(root, callback,
+    pathEntryMap_, base_) {
   var pathEntryMap = pathEntryMap_ || {};
   if (!base_)
     base_ = root;
   base_.createReader().readEntries(function(entries) {
     asyncForEach1(entries, function(entry, callback) {
-      var path = LocalFiles.stripBasePath_(entry.fullPath, root.fullPath);
+      console.assert(strStartsWith(entry.fullPath, root.fullPath + '/'));
+      var path = strStripStart(entry.fullPath, root.fullPath + '/');
       var localEntry = new LocalEntry(path, entry);
       pathEntryMap[path] = localEntry;
       entry.getMetadata(function(metadata) {
@@ -92,20 +116,22 @@ LocalFiles.scan = function(root, callback, pathEntryMap_, base_) {
           size: metadata.size,
           modifiedTime: metadata.modificationTime,
         };
+        if (entry.isDirectory)
+          localEntry.metadata.isDirectory = true;
 
         if (entry.isDirectory)
-          LocalFiles.scan(root, callback, pathEntryMap, entry);
+          this.scan(root, callback, pathEntryMap, entry);
         else
           callback();
-      }, function(error) {
+      }.bind(this), function(error) {
         localEntry.error = error;
         localEntry.metadata = {};
         callback();
       });
-    }, function() {
+    }.bind(this), function() {
       callback(pathEntryMap);
     });
-  });
+  }.bind(this));
 };
 
 /**
@@ -116,9 +142,9 @@ LocalFiles.scan = function(root, callback, pathEntryMap_, base_) {
  * @returns {object} An object with createdPaths, modifiedPaths and
  * deletedPaths properties.
  */
-LocalFiles.compare = function(pathEntryMap) {
+LocalFileManager.prototype.compare = function(pathEntryMap) {
   var currentPaths = Set.fromArray(Object.keys(pathEntryMap));
-  var knownPaths = Set.fromArray(Object.keys(LocalFiles.pathEntryMap));
+  var knownPaths = Set.fromArray(Object.keys(this.pathEntryMap));
   var createdPaths = currentPaths.minus(knownPaths);
   var deletedPaths = knownPaths.minus(currentPaths);
   var commonPaths = currentPaths.intersect(knownPaths);
@@ -126,7 +152,7 @@ LocalFiles.compare = function(pathEntryMap) {
 
   commonPaths.forEach(function(path) {
     var currentEntry = pathEntryMap[path];
-    var knownEntry = LocalFiles.pathEntryMap[path];
+    var knownEntry = this.pathEntryMap[path];
     console.assert(currentEntry.metadata && knownEntry.metadata);
     if (currentEntry.metadata.size != undefined) {
       if (currentEntry.metadata.size != knownEntry.metadata.size ||
@@ -134,7 +160,7 @@ LocalFiles.compare = function(pathEntryMap) {
               knownEntry.metadata.modifiedTime.getTime())
       modifiedPaths.add(path);
     }
-  });
+  }.bind(this));
 
   return {
     createdPaths: createdPaths,

@@ -643,6 +643,10 @@ GoogleDrive.prototype.sendListRequest_ = function(method, url, options,
     // nextPageToken is required for multi-page list requests.
     if (fields.indexOf('nextPageToken') == -1 && !options.oneTimeRequest)
       fields = 'nextPageToken,' + fields;
+    // items is a required fields. Otherwise, the server will respond with
+    // 500 Server Error.
+    if (fields.indexOf('items') == -1)
+      fields = 'items,' + fields;
     xhrOptions.queryParameters.fields = fields;
   }
 

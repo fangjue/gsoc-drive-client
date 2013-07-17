@@ -32,9 +32,10 @@ LocalEntry.fromStorage = function(path, metadata) {
   return result;
 };
 
-var LocalFileManager = function() {
+var LocalFileManager = function(localRootEntry) {
   /** @const */ this.STORAGE_FILES = 'local.files';
   /** @const */ this.STORAGE_ENTRY_PREFIX = 'local.entry.';
+  this.root = localRootEntry;
   return this;
 };
 
@@ -95,20 +96,18 @@ LocalFileManager.prototype.stripBasePath_ = function(fullPath, basePath) {
 
 /**
  * Scan local files in the sync folder.
- * @param {DirectoryEntry} root
  * @param {function} callback
  * @param {object} pathEntryMap_
  * @param {DirectoryEntry} base_
  */
-LocalFileManager.prototype.scan = function(root, callback,
-    pathEntryMap_, base_) {
+LocalFileManager.prototype.scan = function(callback, pathEntryMap_, base_) {
   var pathEntryMap = pathEntryMap_ || {};
   if (!base_)
-    base_ = root;
+    base_ = this.root;
   base_.createReader().readEntries(function(entries) {
     asyncForEach1(entries, function(entry, callback) {
-      console.assert(strStartsWith(entry.fullPath, root.fullPath + '/'));
-      var path = strStripStart(entry.fullPath, root.fullPath + '/');
+      console.assert(strStartsWith(entry.fullPath, this.root.fullPath + '/'));
+      var path = strStripStart(entry.fullPath, this.root.fullPath + '/');
       var localEntry = new LocalEntry(path, entry);
       pathEntryMap[path] = localEntry;
       entry.getMetadata(function(metadata) {
@@ -120,7 +119,7 @@ LocalFileManager.prototype.scan = function(root, callback,
           localEntry.metadata.isDirectory = true;
 
         if (entry.isDirectory)
-          this.scan(root, callback, pathEntryMap, entry);
+          this.scan(callback, pathEntryMap, entry);
         else
           callback();
       }.bind(this), function(error) {

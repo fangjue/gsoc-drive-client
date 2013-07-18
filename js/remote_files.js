@@ -155,17 +155,20 @@ RemoteFileManager.prototype.getChanges = function(callback) {
   }.bind(this));
 };
 
-RemoteFileManager.parseChanges = function() {
+RemoteFileManager.prototype.parseChanges = function() {
   var createdIds = [];
   var modifiedIds = [];
   var deletedIds = [];
   var movedItems = [];
   this.pendingChanges.forEach(function(change) {
-    var entry = this.idEntryMap[change.fileId];
-    if (!entry)
-      return;
-
     var id = change.fileId;
+    var entry = this.idEntryMap[id];
+    if (!entry) {
+      // TODO: Some files are created in an excluded folder.
+      createdIds.push(id);
+      return;
+    }
+
     if (change.deleted)
       deletedIds.push(id);
     else if (change.file) {
@@ -181,13 +184,13 @@ RemoteFileManager.parseChanges = function() {
       else if (!this.hasSameParents_(change.file, entry.metadata))
         movedItems.push({id: id, newMetadata: change.file});
     }
-  }.bind(this);
+  }.bind(this));
   // TODO: Consolidate duplicates.
   return {
     createdIds: createdIds,
     modifiedIds: modifiedIds,
     deletedIds: deletedIds,
-    movedIds: movedIds
+    movedItems: movedItems,
   };
 };
 

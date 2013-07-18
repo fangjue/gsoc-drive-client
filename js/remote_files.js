@@ -9,8 +9,29 @@ function RemoteEntry(metadata) {
   return this;
 };
 
-var RemoteFileManager = function(drive) {
-  this.drive_ = drive;
+RemoteEntry.fromStorage = function(entry) {
+  var result = new RemoteEntry(entry.metadata);
+  if (entry.localPath)
+    result.localPath = entry.localPath;
+  return result;
+};
+
+RemoteEntry.prototype.toStorage = function() {
+  var result = {metadata: this.metadata};
+  if (this.localPath)
+    result.localPath = this.localPath;
+  return result;
+};
+
+var RemoteFileManager = function() {
+  this.drive_ = new GoogleDrive({
+    fields: {
+      about: 'name,quotaBytesTotal,quotaBytesUsed,quotaBytesUsedAggregate,' + 
+              'quotaBytesUsedInTrash,largestChangeId,user',
+      files: 'id,etag,title,mimeType,modifiedDate,downloadUrl,md5Checksum,' + 
+          'fileSize,parents(id,isRoot),labels(trashed)',
+    },
+  });
   /** @const */ this.STORAGE_LARGEST_CHANGE_ID = 'remote.largestChangeId';
   /** @const */ this.STORAGE_IDS = 'remote.ids';
   /** @const */ this.STORAGE_PENDING_CHANGES = 'remote.pendingChanges';
@@ -31,7 +52,7 @@ RemoteFileManager.prototype.load = function(callback) {
     }.bind(this)), function(idEntryMap) {
       this.idEntryMap = dictMap(idEntryMap, function(id, entry) {
         return [strStripStart(id, this.STORAGE_ENTRY_PREFIX),
-                new RemoteEntry(entry)];
+                RemoteEntry.fromStorage(entry)];
       }.bind(this));
       this.findChildren();
       callback({
@@ -46,8 +67,7 @@ RemoteFileManager.prototype.load = function(callback) {
 
 RemoteFileManager.prototype.update = function(callback) {
   var items = dictMap(this.idEntryMap, function(id, entry) {
-    return [this.STORAGE_ENTRY_PREFIX + id,
-            entry.metadata];
+    return [this.STORAGE_ENTRY_PREFIX + id, entry.toStorage()];
   }.bind(this));
   items[this.STORAGE_IDS] = Object.keys(this.idEntryMap);
   items[this.STORAGE_LARGEST_CHANGE_ID] = this.largestChangeId;
@@ -133,4 +153,59 @@ RemoteFileManager.prototype.getChanges = function(callback) {
     } else
       callback(null, error);
   }.bind(this));
+};
+
+RemoteFileManager.parseChanges = function() {
+  var createdIds = [];
+  var modifiedIds = [];
+  var deletedIds = [];
+  var movedItems = [];
+  this.pendingChanges.forEach(function(change) {
+    var entry = this.idEntryMap[change.fileId];
+    if (!entry)
+      return;
+
+    var id = change.fileId;
+    if (change.deleted)
+      deletedIds.push(id);
+    else if (change.file) {
+      if (change.file.labels.trashed != entry.metadata.labels.trashed)
+        deletedIds.push(id);
+      else if ((new Date(change.file.modifiedDate)).getTime() !=
+          (new Date(entry.metadata.modifiedDate)).getTime() ||
+          change.file.fileSize != entry.metadata.fileSize ||
+          change.file.md5Checksum != entry.metadata.md5Checksum)
+        modifiedIds.push(id);
+      else if (change.file.title != entry.metadata.title)
+        movedItems.push({id: id, newMetadata: change.file});
+      else if (!this.hasSameParents_(change.file, entry.metadata))
+        movedItems.push({id: id, newMetadata: change.file});
+    }
+  }.bind(this);
+  // TODO: Consolidate duplicates.
+  return {
+    createdIds: createdIds,
+    modifiedIds: modifiedIds,
+    deletedIds: deletedIds,
+    movedIds: movedIds
+  };
+};
+
+/**
+ * Test whether two files' metadata contains the same parents.
+ * @param {object} a The first file's metadata.
+ * @param {object} b The second file's metadata.
+ */
+RemoteFileManager.prototype.hasSameParents_ = function(a, b) {
+  if (a.parents.length != b.parents.length)
+    return false;
+  a.parents.forEach(function(aParent) {
+    // If every parent of B does not match this parent of A, they have
+    // different parents.
+    if (b.parents.every(function(bParent) {
+      return aParent.id != bParent.id;
+    }))
+      return false;
+  });
+  return true;
 };

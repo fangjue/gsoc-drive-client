@@ -1,0 +1,16 @@
+application: gsoc-drive-client
+version: 0-1
+runtime: python27
+api_version: 1
+threadsafe: true
+
+handlers: 
+- url: /robots\.txt
+  static_files: robots.txt
+  upload: robots.txt
+- url: /google34bd2706d3a16e17\.html
+  static_files: google34bd2706d3a16e17.html
+  upload: google34bd2706d3a16e17.html
+- url: /notifications
+  script: handler.app
+  secure: always

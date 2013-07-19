@@ -227,6 +227,10 @@ var GoogleDrive = function(opt_options) {
       'https://www.googleapis.com/drive/v2/changes';
   /** @const */ this.DRIVE_API_ABOUT_URL =
       'https://www.googleapis.com/drive/v2/about';
+  /** @const */ this.DRIVE_API_CHANGES_WATCH_URL =
+      'https://www.googleapis.com/drive/v2/changes/watch';
+  /** @const */ this.DRIVE_API_STOP_WATCH_URL =
+      'https://www.googleapis.com/drive/v2/channels/stop';
 
   /** @const */ this.DRIVE_API_MAX_RESULTS = 1000;
   // TODO: Figure out the best value for list requests.
@@ -982,6 +986,69 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
 
   this.sendListRequest_('GET', this.DRIVE_API_CHANGES_BASE_URL, listFields,
       xhrOptions, callback);
+};
+
+/**
+ * @typedef {object} DriveWatchOptions
+ * @property {string} channelId A string that uniquely identifies this watch
+ *     channel. It cannot contain '/' and may not contain more than 64
+ *     charecters.
+ * @property {string} receivingUrl The URL to receive notifications.
+ * @property {string} token Optional. An arbitrary string value with no more
+ *     than 256 characters.
+ * @property {integer} ttl The number of seconds of time-to-live value to
+ *     request.
+ */
+
+/**
+ * Start watching all changes made to files in Google Drive. Change
+ * notifications will be sent to the specified URL. For more details, please
+ * read https://developers.google.com/drive/push.
+ * @param {DriveWatchOptions} options Details of the watch request.
+ * @param {function} callback Called with the response.
+ */
+GoogleDrive.prototype.watchChanges = function(options, callback) {
+  console.assert(options.channelId && options.receivingUrl &&
+      options.channelId.length <= 64);
+  console.assert((options.token || '').length <= 256);
+  var xhrOptions = {
+    body: {
+      id: options.channelId,
+      type: 'web_hook',
+      address: options.receivingUrl,
+    },
+  };
+
+  if (options.token)
+    xhrOptions.body.token = options.token;
+  if (options.ttl)
+    xhrOptions.body.params = {ttl: options.ttl};
+
+  this.sendDriveRequest_('POST', this.DRIVE_API_CHANGES_WATCH_URL, xhrOptions,
+      function(xhr, error) {
+    if (error)
+      callback(null, error);
+    else
+      callback(JSON.parse(xhr.responseText));
+  });
+};
+
+/**
+ * Stop receiving notifications on the specified watching channel and resource.
+ * Read https://developers.google.com/drive/push for more details.
+ * @param {string} channelId The channel id specified in and returned by
+ *     the watch request.
+ * @param {string} resourceId The resource id returned by the watch request.
+ */
+GoogleDrive.prototype.stopWatch = function(channelId, resourceId,
+    opt_callback) {
+  this.sendDriveRequest_('POST', this.DRIVE_API_STOP_WATCH_URL, {body: {
+    id: channelId,
+    resourceId: resourceId,
+  }}, function(xhr, error) {
+    if (opt_callback)
+      opt_callback(error);
+  });
 };
 
 // For debugging.

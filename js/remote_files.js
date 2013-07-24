@@ -39,11 +39,11 @@ var RemoteFileManager = function() {
 };
 
 RemoteFileManager.prototype.load = function(callback) {
+  console.assert(!this.loaded_);
   var items = {};
   items[this.STORAGE_LARGEST_CHANGE_ID] = 0;
   items[this.STORAGE_IDS] = [];
-  items[this.STORAGE_PENDING_CHANGES] = [];
-  items[this.STORAGE_LAST_KNOWN_CHANGE] = null;
+  items[this.STORAGE_PENDING_CHANGES] = {createdIds: [], modifiedIds: [], deletedIds: [], movedItems: []};
   chrome.storage.local.get(items, function(items) {
     this.largestChangeId = items[this.STORAGE_LARGEST_CHANGE_ID];
     this.pendingChanges = items[this.STORAGE_PENDING_CHANGES];
@@ -55,24 +55,26 @@ RemoteFileManager.prototype.load = function(callback) {
                 RemoteEntry.fromStorage(entry)];
       }.bind(this));
       this.findChildren();
-      callback({
-        largestChangeId: this.largestChangeId,
-        pendingChanges: this.pendingChanges,
-        idEntryMap: this.idEntryMap,
-        idChildrenMap: this.idChildrenMap
-      });
+      this.loaded_ = true;
+      callback();
     }.bind(this));
   }.bind(this));
 };
 
-RemoteFileManager.prototype.update = function(callback) {
-  var items = dictMap(this.idEntryMap, function(id, entry) {
-    return [this.STORAGE_ENTRY_PREFIX + id, entry.toStorage()];
-  }.bind(this));
-  items[this.STORAGE_IDS] = Object.keys(this.idEntryMap);
-  items[this.STORAGE_LARGEST_CHANGE_ID] = this.largestChangeId;
-  items[this.STORAGE_PENDING_CHANGES] = this.pendingChanges;
-  chrome.storage.local.set(items, callback);
+RemoteFileManager.prototype.update = function(opt_callback, opt_items) {
+  var items = {};
+  if (!opt_items || opt_items.indexOf('entries') != -1) {
+    items = dictMap(this.idEntryMap, function(id, entry) {
+      return [this.STORAGE_ENTRY_PREFIX + id, entry.toStorage()];
+    }.bind(this));
+    items[this.STORAGE_IDS] = Object.keys(this.idEntryMap);
+  }
+  if ((!opt_items || opt_items.indexOf('largestChangeId') != -1) &&
+      this.largestChangeId)
+    items[this.STORAGE_LARGEST_CHANGE_ID] = this.largestChangeId;
+  if (!opt_items || opt_items.indexOf('pendingChanges') != -1)
+    items[this.STORAGE_PENDING_CHANGES] = this.pendingChanges;
+  chrome.storage.local.set(items, opt_callback);
 };
 
 RemoteFileManager.prototype.findChildren = function() {
@@ -107,18 +109,23 @@ RemoteFileManager.prototype.removeEntries = function(id) {
  * Scan remote files inside My Drive.
  * @param {function} callback Called with the result.
  */
-RemoteFileManager.prototype.scan = function(callback) {
+RemoteFileManager.prototype.scan_ = function(callback) {
   this.drive_.getAccountInfo({fields: 'largestChangeId'},
       function(info, error) {
     if (!info) {
-      callback(null, error);
+      callback(error);
       return;
     }
 
     this.largestChangeId = info.largestChangeId;
 
     this.drive_.getAll({q: '\'me\' in owners and trashed = false'},
-        function(files) {
+        function(files, error) {
+      if (error) {
+        callback(error);
+        return;
+      }
+
       this.idEntryMap = {};
       files.forEach(function(entry) {
         this.idEntryMap[entry.id] = new RemoteEntry(entry);
@@ -126,41 +133,30 @@ RemoteFileManager.prototype.scan = function(callback) {
 
       this.findChildren();
 
-      callback({
-        largestChangeId: this.largestChangeId,
-        idEntryMap: this.idEntryMap,
-        idChildrenMap: this.idChildrenMap,
-      });
+      this.update(callback);
     }.bind(this));
   }.bind(this));
 };
 
-RemoteFileManager.prototype.getChanges = function(callback) {
+RemoteFileManager.prototype.fetchChanges_ = function(callback) {
   this.drive_.getChanges({startChangeId: parseInt(this.largestChangeId) + 1,
       includeSubscribed: false}, function(changes, error) {
     if (changes) {
-      if (changes.items.length > 0) {
-        var firstChange = changes.items[0];
-        var lastChange = changes.items[changes.items.length - 1];
-        this.pendingChanges = this.pendingChanges.concat(
-            changes.items);
-      }
       this.largestChangeId = changes.largestChangeId;
-      callback({
-        largestChangeId: this.largestChangeId,
-        pendingChanges: this.pendingChanges,
-      });
+      callback(changes.items);
     } else
       callback(null, error);
   }.bind(this));
 };
 
-RemoteFileManager.prototype.parseChanges = function() {
+// TODO: Detect changes that are already made (ie. between the first
+// largestChangeId and the first scanning).
+RemoteFileManager.prototype.parseChanges_ = function(changes) {
   var createdIds = [];
   var modifiedIds = [];
   var deletedIds = [];
   var movedItems = [];
-  this.pendingChanges.forEach(function(change) {
+  changes.forEach(function(change) {
     var id = change.fileId;
     var entry = this.idEntryMap[id];
     if (!entry) {
@@ -185,13 +181,59 @@ RemoteFileManager.prototype.parseChanges = function() {
         movedItems.push({id: id, newMetadata: change.file});
     }
   }.bind(this));
-  // TODO: Consolidate duplicates.
   return {
     createdIds: createdIds,
     modifiedIds: modifiedIds,
     deletedIds: deletedIds,
     movedItems: movedItems,
   };
+};
+
+RemoteFileManager.prototype.addPendingChanges_ = function(pendingChanges) {
+  // TODO: Consolidate duplicates.
+  Array.prototype.push.apply(this.pendingChanges.createdIds,
+      pendingChanges.createdIds);
+  Array.prototype.push.apply(this.pendingChanges.modifiedIds,
+      pendingChanges.modifiedIds);
+  Array.prototype.push.apply(this.pendingChanges.deletedIds,
+      pendingChanges.deletedIds);
+  Array.prototype.push.apply(this.pendingChanges.movedItems,
+      pendingChanges.movedItems);
+};
+
+RemoteFileManager.prototype.getChanges_ = function(callback) {
+  console.assert(this.largestChangeId);
+  this.fetchChanges_(function(changes, error) {
+    if (error)
+      callback(error)
+    else {
+      this.addPendingChanges_(this.parseChanges_(changes));
+      this.update(callback, ['pendingChanges', 'largestChangeId']);
+    }
+  }.bind(this));
+};
+
+RemoteFileManager.prototype.getPendingChanges = function(callback) {
+  if (this.largestChangeId) {
+    this.getChanges_(function(error) {
+      if (error)
+        callback(null, error);
+      else
+        callback(this.pendingChanges);
+    }.bind(this));
+  } else {
+    this.scan_(function() {
+      this.pendingChanges = {
+        createdIds: Object.keys(this.idEntryMap),
+        modifiedIds: [],
+        deletedIds: [],
+        movedItems: [],
+      };
+      this.update(function() {
+        callback(this.pendingChanges);
+      }.bind(this), 'pendingChanges');
+    }.bind(this));
+  }
 };
 
 /**

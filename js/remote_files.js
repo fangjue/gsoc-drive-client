@@ -6,6 +6,8 @@
 
 function RemoteEntry(metadata) {
   this.metadata = metadata;
+  this.isFolder = metadata.id == 'root' || metadata.mimeType ==
+      'application/vnd.google-apps.folder';
   return this;
 };
 
@@ -36,6 +38,8 @@ var RemoteFileManager = function() {
   /** @const */ this.STORAGE_IDS = 'remote.ids';
   /** @const */ this.STORAGE_PENDING_CHANGES = 'remote.pendingChanges';
   /** @const */ this.STORAGE_ENTRY_PREFIX = 'remote.entry.';
+
+  this.rootEntry_ = new RemoteEntry({id: 'root'});
 };
 
 RemoteFileManager.prototype.load = function(callback) {
@@ -43,7 +47,7 @@ RemoteFileManager.prototype.load = function(callback) {
   var items = {};
   items[this.STORAGE_LARGEST_CHANGE_ID] = 0;
   items[this.STORAGE_IDS] = [];
-  items[this.STORAGE_PENDING_CHANGES] = {createdIds: [], modifiedIds: [], deletedIds: [], movedItems: []};
+  items[this.STORAGE_PENDING_CHANGES] = [];
   chrome.storage.local.get(items, function(items) {
     this.largestChangeId = items[this.STORAGE_LARGEST_CHANGE_ID];
     this.pendingChanges = items[this.STORAGE_PENDING_CHANGES];
@@ -72,7 +76,8 @@ RemoteFileManager.prototype.update = function(opt_callback, opt_items) {
   if ((!opt_items || opt_items.indexOf('largestChangeId') != -1) &&
       this.largestChangeId)
     items[this.STORAGE_LARGEST_CHANGE_ID] = this.largestChangeId;
-  if (!opt_items || opt_items.indexOf('pendingChanges') != -1)
+  if (!opt_items || opt_items.indexOf('pendingChanges') != -1 &&
+      this.pendingChanges.length > 0)
     items[this.STORAGE_PENDING_CHANGES] = this.pendingChanges;
   chrome.storage.local.set(items, opt_callback);
 };
@@ -152,53 +157,42 @@ RemoteFileManager.prototype.fetchChanges_ = function(callback) {
 // TODO: Detect changes that are already made (ie. between the first
 // largestChangeId and the first scanning).
 RemoteFileManager.prototype.parseChanges_ = function(changes) {
-  var createdIds = [];
-  var modifiedIds = [];
-  var deletedIds = [];
-  var movedItems = [];
+  var result = [];
   changes.forEach(function(change) {
     var id = change.fileId;
     var entry = this.idEntryMap[id];
     if (!entry) {
       // TODO: Some files are created in an excluded folder.
-      createdIds.push(id);
+      result.push({type: 'create', id: id});
+      // TODO: Update idChildrenMap.
+      // For convenience, created files are added to idEntryMap.
+      this.idEntryMap[id] = new RemoteEntry(change.file);
       return;
     }
 
     if (change.deleted)
-      deletedIds.push(id);
+      result.push({type: 'delete', id: id});
     else if (change.file) {
       if (change.file.labels.trashed != entry.metadata.labels.trashed)
-        deletedIds.push(id);
+        result.push({type: 'delete', id: id});
       else if ((new Date(change.file.modifiedDate)).getTime() !=
           (new Date(entry.metadata.modifiedDate)).getTime() ||
           change.file.fileSize != entry.metadata.fileSize ||
           change.file.md5Checksum != entry.metadata.md5Checksum)
-        modifiedIds.push(id);
+        // TODO: Include details in metadata.
+        result.push({type: 'modify', id: id, metadata: change.file});
       else if (change.file.title != entry.metadata.title)
-        movedItems.push({id: id, newMetadata: change.file});
+        result.push({type: 'rename', id: id, metadata: change.file});
       else if (!this.hasSameParents_(change.file, entry.metadata))
-        movedItems.push({id: id, newMetadata: change.file});
+        result.push({type: 'move', id: id, metadata: change.file});
     }
   }.bind(this));
-  return {
-    createdIds: createdIds,
-    modifiedIds: modifiedIds,
-    deletedIds: deletedIds,
-    movedItems: movedItems,
-  };
+  return result;
 };
 
 RemoteFileManager.prototype.addPendingChanges_ = function(pendingChanges) {
   // TODO: Consolidate duplicates.
-  Array.prototype.push.apply(this.pendingChanges.createdIds,
-      pendingChanges.createdIds);
-  Array.prototype.push.apply(this.pendingChanges.modifiedIds,
-      pendingChanges.modifiedIds);
-  Array.prototype.push.apply(this.pendingChanges.deletedIds,
-      pendingChanges.deletedIds);
-  Array.prototype.push.apply(this.pendingChanges.movedItems,
-      pendingChanges.movedItems);
+  Array.prototype.push.apply(this.pendingChanges, pendingChanges);
 };
 
 RemoteFileManager.prototype.getChanges_ = function(callback) {
@@ -207,8 +201,13 @@ RemoteFileManager.prototype.getChanges_ = function(callback) {
     if (error)
       callback(error)
     else {
-      this.addPendingChanges_(this.parseChanges_(changes));
-      this.update(callback, ['pendingChanges', 'largestChangeId']);
+      var changes = this.parseChanges_(changes);
+      this.addPendingChanges_(changes);
+      var items = ['pendingChanges', 'largestChangeId'];
+      // parseChanges_ will add created entries to idEntryMap.
+      if (changes.createdIds.length > 0)
+        items.push('entries');
+      this.update(callback, items);
     }
   }.bind(this));
 };
@@ -223,12 +222,10 @@ RemoteFileManager.prototype.getPendingChanges = function(callback) {
     }.bind(this));
   } else {
     this.scan_(function() {
-      this.pendingChanges = {
-        createdIds: Object.keys(this.idEntryMap),
-        modifiedIds: [],
-        deletedIds: [],
-        movedItems: [],
-      };
+      Array.prototype.push.apply(this.pendingChanges,
+          Object.keys(this.idEntryMap).transform(function(id) {
+        return {type: 'create', id: id};
+      });
       this.update(function() {
         callback(this.pendingChanges);
       }.bind(this), 'pendingChanges');
@@ -253,4 +250,12 @@ RemoteFileManager.prototype.hasSameParents_ = function(a, b) {
       return false;
   });
   return true;
+};
+
+RemoteFileManager.prototype.getEntry = function(id) {
+  return this.idEntryMap[id];
+};
+
+RemoteFileManager.prototype.getRoot = function() {
+  return this.rootEntry_;
 };

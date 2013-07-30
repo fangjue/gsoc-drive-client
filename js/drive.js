@@ -212,8 +212,6 @@ var GoogleDrive = function(opt_options) {
     opt_options = {};
 
   /** @const */ this.DEFAULT_MIME_TYPE = 'application/octet-stream';
-  /** @const */ this.DRIVE_FOLDER_MIME_TYPE =
-      'application/vnd.google-apps.folder';
 
   // Chunk sizes must be a multiple of 256 KB.
   // Multiple requests for a single file count as one request.
@@ -258,6 +256,12 @@ var GoogleDrive = function(opt_options) {
   this.pendingResumableUploads_ = {};
 
   return this;
+};
+
+/** @const */ GoogleDrive.MIME_TYPE_FOLDER =
+    'application/vnd.google-apps.folder';
+GoogleDrive.isFolder = function(file) {
+  return file.mimeType == GoogleDrive.MIME_TYPE_FOLDER;
 };
 
 GoogleDrive.prototype.getFields_ = function(options, type) {
@@ -767,7 +771,7 @@ GoogleDrive.prototype.createFolder = function(parentId, title, options,
   var metadata = {
     title: title,
     parents: [{id: parentId}],
-    mimeType: this.DRIVE_FOLDER_MIME_TYPE,
+    mimeType: GoogleDrive.MIME_TYPE_FOLDER,
   };
 
   if (options.metadata)
@@ -1050,13 +1054,3 @@ GoogleDrive.prototype.stopWatch = function(channelId, resourceId,
       opt_callback(error);
   });
 };
-
-// For debugging.
-var __;
-function _() {
-  if (arguments.length < 2 )
-    console.log(__ = arguments[0]);
-  else
-    console.log(__ = arguments);
-}
-var d = new GoogleDrive();

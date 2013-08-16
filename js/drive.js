@@ -322,10 +322,10 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
           error.driveError = driveError;
 
         if ((error.xhrError.status >= 500 && error.xhrError.status < 600) ||
-            !driveError.errors.every(function(error) {
+            (driveError && !driveError.errors.every(function(error) {
               return error.reason != 'rateLimitExceeded' &&
                      error.reason != 'userRateLimitExceeded';
-            })) {
+            }))) {
           if (retryCount_ != undefined)
             ++retryCount_;
           else

@@ -742,20 +742,27 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
 
 /**
  * Download a file from Google Drive.
- * @param {downloadUrl} The download URL of the file.
+ * @param {fileId} The file's id.
  * @param {object} options
  * @param {function} callback Called with the downloaded data.
  */
-// TODO: Add options.range, etc.
-GoogleDrive.prototype.download = function(downloadUrl, options, callback) {
-  this.sendDriveRequest_('GET', downloadUrl, {
-      responseType: 'blob',
-      expectedStatus: [200, 206]
-  }, function(xhr, error) {
+GoogleDrive.prototype.download = function(fileId, options, callback) {
+  this.get(fileId, {fields: 'downloadUrl'}, function(metadata, error) {
     if (error)
       callback(null, error);
-    else if (xhr.status == 200 || xhr.status == 206)
-      callback(xhr.response);
+    else if (!metadata.downloadUrl)
+      callback(null, {});
+    else {
+      this.sendDriveRequest_('GET', metadata.downloadUrl, {
+          responseType: 'blob',
+          expectedStatus: [200, 206],
+      }, function(xhr, error) {
+        if (error)
+          callback(null, error);
+        else
+          callback(xhr.response);
+      }.bind(this));
+    }
   }.bind(this));
 };
 

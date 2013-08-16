@@ -45,10 +45,11 @@ var RequestSender = function() {
  * @property {string} authorization HTTP Authorization header.
  * @property {HTTPRange} contentRange HTTP Content-Range header.
  * @property {string} contentType HTTP Content-Type header.
- * @property {object} headers A dictionary containing additional HTTP headers.
- *     Keys are HTTP header names and values are HTTP header values.
+ * @property {string} ifMatch If-Match HTTP header.
  * @property {HTTPRange} range HTTP Range header. Only |start| and |end|
  *     properties can be used here.
+ * @property {object} headers A dictionary containing additional HTTP headers.
+ *     Keys are HTTP header names and values are HTTP header values.
  * @property {string|Blob|File|object} body Request body that will be passed
  *     to XMLHttpRequest's send method. If it's an Object, it will be
  *     JSON-stringified, and the content type will be automatically set to
@@ -98,6 +99,8 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
     xhr.responseType = details.responseType;
   if (details.authorization)
     xhr.setRequestHeader('Authorization', details.authorization);
+  if (details.ifMatch)
+    xhr.setRequestHeader('If-Match', details.ifMatch);
 
   if (details.range)
     xhr.setRequestHeader('Range', this.getRangeHeader_(details.range));
@@ -375,6 +378,8 @@ GoogleDrive.prototype.sendFilesRequest_ = function(method, details,
     xhr_details.body = details.body;
   if (details.contentType)
     xhr_details.contentType = details.contentType;
+  if (details.ifMatch)
+    xhr_details.ifMatch = details.ifMatch;
 
   this.sendDriveRequest_(method, url, xhr_details, function(xhr, error) {
     if (opt_callback) {
@@ -401,21 +406,26 @@ GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
     opt_metadata, opt_content, opt_callback) {
   console.assert(opt_metadata || opt_content);
 
-  if (opt_metadata && opt_content)
+  if (opt_metadata && opt_content) {
+    // Both metadata and content.
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
       this.sendResumableUploadRequest_(method, options, opt_metadata,
           opt_content, opt_callback);
     else
       this.sendMultipartUploadRequest_(method, options, opt_metadata,
           opt_content, opt_callback);
-  else if (opt_metadata) {
+  } else if (opt_metadata) {
+    // Metadata only.
     var filesRequestOptions = {
-      body: opt_metadata
+      body: opt_metadata,
     };
     if (options.fileId)
       filesRequestOptions.fileId = options.fileId;
+    if (options.ifMatch)
+      filesRequestOptions.ifMatch = options.ifMatch;
     this.sendFilesRequest_(method, filesRequestOptions, opt_callback);
   } else {
+    // Content only.
     if (opt_content.size > this.RESUMABLE_UPLOAD_THRESHOLD)
       this.sendResumableUploadRequest_('PUT', options, null, opt_content,
           opt_callback);
@@ -429,6 +439,8 @@ GoogleDrive.prototype.sendUploadRequest_ = function(method, options,
         filesRequestOptions.upload = options.upload;
       if (options.fileId)
         filesRequestOptions.fileId = options.fileId;
+      if (options.ifMatch)
+        filesRequestOptions.ifMatch = options.ifMatch;
       this.sendFilesRequest_(method, filesRequestOptions, opt_callback);
     }
   }
@@ -502,6 +514,8 @@ GoogleDrive.prototype.sendResumableUploadRequest_ = function(method, options,
   var url = this.DRIVE_API_FILES_UPLOAD_URL;
   if (options.fileId)
     url += '/' + options.fileId;
+  if (options.ifMatch)
+    xhrOptions.ifMatch = options.ifMatch;
   this.sendDriveRequest_(method, url, xhrOptions,
       function(xhr, error) {
     if (error) {
@@ -732,12 +746,20 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
     opt_metadataUpdates, opt_content, opt_options, opt_callback) {
   console.assert(!(opt_fullMetadata && opt_metadataUpdates));
   console.assert(!(opt_metadataUpdates && opt_content));
-  if (opt_metadataUpdates)
-    this.sendUploadRequest_('PATCH', {fileId: fileId},
-        opt_metadataUpdates, null, opt_callback);
-  else if (opt_content || opt_fullMetadata)
-    this.sendUploadRequest_('PUT', {fileId: fileId, upload: true},
-        opt_fullMetadata, opt_content, opt_callback);
+  if (!opt_options)
+    opt_options = {};
+  if (opt_metadataUpdates) {
+    this.sendUploadRequest_('PATCH', {
+      fileId: fileId,
+      ifMatch: opt_options.etag
+    }, opt_metadataUpdates, null, opt_callback);
+  } else if (opt_content || opt_fullMetadata) {
+    this.sendUploadRequest_('PUT', {
+      fileId: fileId,
+      upload: true,
+      ifMatch: opt_options.etag
+    }, opt_fullMetadata, opt_content, opt_callback);
+  }
 };
 
 /**
@@ -747,10 +769,11 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
  * @param {function} callback Called with the downloaded data.
  */
 GoogleDrive.prototype.download = function(fileId, options, callback) {
-  this.get(fileId, {fields: 'downloadUrl'}, function(metadata, error) {
+  this.get(fileId, {fields: 'downloadUrl,etag'}, function(metadata, error) {
     if (error)
       callback(null, error);
-    else if (!metadata.downloadUrl)
+    else if ((options.etag && metadata.etag != options.etag) ||
+        !metadata.downloadUrl)
       callback(null, {});
     else {
       this.sendDriveRequest_('GET', metadata.downloadUrl, {

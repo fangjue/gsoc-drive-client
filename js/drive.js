@@ -819,6 +819,24 @@ GoogleDrive.prototype.getChanges = function(options, callback) {
       xhrOptions, callback);
 };
 
+GoogleDrive.prototype.getRevision = function(fileId, revisionId, options,
+    callback) {
+  var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId +
+      '/revisions/' + revisionId;
+  var xhr_options = {
+    expectedStatus: [200],
+    queryParameters: {}
+  };
+  this.setFields_(xhr_options.queryParameters, options, 'revisions');
+  this.sendDriveRequest_('GET', url, xhr_options,
+      function(xhr, error) {
+    if (error)
+      callback(null, error);
+    else
+      callback(JSON.parse(xhr.responseText));
+  }.bind(this));
+};
+
 /**
  * @typedef {object} DriveWatchOptions
  * @property {string} channelId A string that uniquely identifies this watch

@@ -18,18 +18,20 @@ var GoogleDrive = function(opt_options) {
   /** @const */ this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
   /** @const */ this.DEFAULT_DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4;
 
+  /** @const */ this.DRIVE_API_SERVER =
+      'https://www.googleapis.com/';
   /** @const */ this.DRIVE_API_FILES_BASE_URL =
-      'https://www.googleapis.com/drive/v2/files';
+      this.DRIVE_API_SERVER + 'drive/v2/files';
   /** @const */ this.DRIVE_API_FILES_UPLOAD_URL =
-      'https://www.googleapis.com/upload/drive/v2/files';
+      this.DRIVE_API_SERVER + 'upload/drive/v2/files';
   /** @const */ this.DRIVE_API_CHANGES_BASE_URL =
-      'https://www.googleapis.com/drive/v2/changes';
+      this.DRIVE_API_SERVER + 'drive/v2/changes';
   /** @const */ this.DRIVE_API_ABOUT_URL =
-      'https://www.googleapis.com/drive/v2/about';
+      this.DRIVE_API_SERVER + 'drive/v2/about';
   /** @const */ this.DRIVE_API_CHANGES_WATCH_URL =
-      'https://www.googleapis.com/drive/v2/changes/watch';
+      this.DRIVE_API_SERVER + 'drive/v2/changes/watch';
   /** @const */ this.DRIVE_API_STOP_WATCH_URL =
-      'https://www.googleapis.com/drive/v2/channels/stop';
+      this.DRIVE_API_SERVER + 'drive/v2/channels/stop';
 
   /** @const */ this.DRIVE_API_MAX_RESULTS = 1000;
   // TODO: Figure out the best value for list requests.
@@ -106,10 +108,15 @@ GoogleDrive.prototype.sendDriveRequest_ = function(method, url, options,
       return;
     }
 
+    if (strStartsWith(url, this.DRIVE_API_SERVER)) {
+      // prettyPrint=false is only supported (and makes sense) in Drive API
+      // requests. It should not be used when a download request is sent.
+      if (!options.queryParameters)
+        options.queryParameters = {};
+      options.queryParameters.prettyPrint = 'false';
+    }
+
     options.authorization = 'Bearer ' + token;
-    if (!options.queryParameters)
-      options.queryParameters = {};
-    options.queryParameters.prettyPrint = 'false';
     this.requestSender_.sendRequest(method, url, options,
         function (xhr, error) {
       if (error && error.xhrError) {

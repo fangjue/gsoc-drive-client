@@ -657,8 +657,6 @@ GoogleDrive.prototype.downloadNextChunkAsBlob_ = function(url, fileSize,
       chunkCallback(null, function(){}, error);
       completedCallback(error);
     } else {
-      var blob = xhr.response;
-      offset += blob.size;
       // TODO: Make RequestSender return a Response object so that response
       // header parsing can be done within RequestSender.
       var contentRange = xhr.getResponseHeader('Content-Range');
@@ -666,11 +664,19 @@ GoogleDrive.prototype.downloadNextChunkAsBlob_ = function(url, fileSize,
       if (match && match[3])
         realSize_ = parseInt(match[3]);
 
-      if (!chunkCallback({
+      var blob = xhr.response;
+      var chunk = {
         data: blob,
         offset: offset,
         length: blob.size,
-      }, onNextChunkExpected.bind(this))) {
+      };
+      offset += blob.size;
+      if (realSize_) {
+        chunk.totalSize = realSize_;
+        chunk.remainingSize = realSize_ - offset;
+      }
+
+      if (!chunkCallback(chunk, onNextChunkExpected.bind(this))) {
         onNextChunkExpected.bind(this)();
       }
     }

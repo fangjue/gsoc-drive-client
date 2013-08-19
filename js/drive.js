@@ -16,6 +16,7 @@ var GoogleDrive = function(opt_options) {
   // Chunk sizes must be a multiple of 256 KB.
   // Multiple requests for a single file count as one request.
   /** @const */ this.DEFAULT_UPLOAD_CHUNK_SIZE = 256 * 1024 * 4;
+  /** @const */ this.DEFAULT_DOWNLOAD_CHUNK_SIZE = 1024 * 1024 * 4;
 
   /** @const */ this.DRIVE_API_FILES_BASE_URL =
       'https://www.googleapis.com/drive/v2/files';
@@ -524,8 +525,11 @@ GoogleDrive.prototype.upload = function(metadata, content, options,
  * @param {function} callback Called with the file's metadata.
  */
 GoogleDrive.prototype.get = function(fileId, options, callback) {
-  this.sendFilesRequest_('GET', {fileId: fileId, fields: options.fields},
-      callback);
+  this.sendFilesRequest_('GET', {
+    fileId: fileId,
+    fields: options.fields,
+    ifMatch: options.etag,
+  }, callback);
 };
 
 /**
@@ -562,28 +566,116 @@ GoogleDrive.prototype.update = function(fileId, opt_fullMetadata,
 /**
  * Download a file from Google Drive.
  * @param {fileId} The file's id.
- * @param {object} options
+ * @param {object} options If |etag| property is specified, it's guaranteed
+ *     that the downloaded version of the file matches the specified etag
+ *     even if the file is changed during downloading.
  * @param {function} callback Called with the downloaded data.
  */
 GoogleDrive.prototype.download = function(fileId, options, callback) {
-  this.get(fileId, {fields: 'downloadUrl,etag'}, function(metadata, error) {
-    if (error)
-      callback(null, error);
-    else if ((options.etag && metadata.etag != options.etag) ||
-        !metadata.downloadUrl)
-      callback(null, {});
-    else {
-      this.sendDriveRequest_('GET', metadata.downloadUrl, {
-          responseType: 'blob',
-          expectedStatus: [200, 206],
-      }, function(xhr, error) {
-        if (error)
-          callback(null, error);
-        else
-          callback(xhr.response);
-      }.bind(this));
+  if (options.etag) {
+    this.get(fileId, {
+      fields: 'headRevisionId',
+      etag: options.etag,
+    }, function(metadata, error) {
+      if (error)
+        callback(null, error);
+      else if (!metadata.headRevisionId)
+        callback(null, {});
+      else {
+        this.getRevision(fileId, metadata.headRevisionId,
+            {fields: 'downloadUrl,fileSize'}, function(revision, error) {
+          if (error)
+            callback(null, error);
+          else
+            this.downloadAsBlob_(revision, options, callback);
+        }.bind(this));
+      }
+    }.bind(this));
+  } else {
+    this.get(fileId, {fields: 'downloadUrl,fileSize'}, function(metadata, error) {
+      if (error)
+        callback(null, error);
+      else if (!metadata.downloadUrl)
+        callback(null, {});
+      else {
+        this.downloadAsBlob_(metadata, options, callback);
+      }
+    }.bind(this));
+  }
+};
+
+GoogleDrive.prototype.downloadAsBlob_ = function(details, options, callback) {
+  if (options.chunkCallback) {
+    // Download the file as chunks to save memory for large files.
+    this.downloadNextChunkAsBlob_(details.downloadUrl, details.fileSize,
+        options.chunkCallback, callback);
+  } else {
+    // Download the whole file as a Blob.
+    this.downloadChunkAsBlob_(details.downloadUrl, null, function(xhr, error) {
+      if (error)
+        callback(null, error);
+      else
+        callback(xhr.response);
+    });
+  }
+};
+
+GoogleDrive.prototype.downloadNextChunkAsBlob_ = function(url, fileSize,
+    chunkCallback, completedCallback, offset_, realSize_) {
+  console.assert(offset_ == undefined || realSize_ == undefined ||
+      offset_ < realSize_);
+  var chunkSize = this.DEFAULT_DOWNLOAD_CHUNK_SIZE;
+  var offset = offset_ == undefined ? 0 : offset_;
+  var length = Math.min(fileSize || chunkSize, chunkSize);
+  if (offset_ != undefined && realSize_ != undefined)
+    length = Math.min(length, realSize_ - offset_);
+  // TODO: length == 0 ?
+
+  this.downloadChunkAsBlob_(url, {
+    start: offset,
+    end: offset + length - 1,
+  }, function(xhr, error) {
+    function onNextChunkExpected(opt_newCallback) {
+      if (opt_newCallback)
+        chunkCallback = opt_newCallback;
+      if (realSize_ != undefined && offset < realSize_ ||
+          realSize_ == undefined && length >= chunkSize) {
+        this.downloadNextChunkAsBlob_(url, fileSize, chunkCallback,
+            completedCallback, offset, realSize_);
+      } else
+        completedCallback();
+    }
+
+    if (error) {
+      chunkCallback(null, function(){}, error);
+      completedCallback(error);
+    } else {
+      var blob = xhr.response;
+      offset += blob.size;
+      // TODO: Make RequestSender return a Response object so that response
+      // header parsing can be done within RequestSender.
+      var contentRange = xhr.getResponseHeader('Content-Range');
+      var match = /bytes\s+(\d*)-(\d*)\/(\d*)/.exec(contentRange);
+      if (match && match[3])
+        realSize_ = parseInt(match[3]);
+
+      if (!chunkCallback({
+        data: blob,
+        offset: offset,
+        length: blob.size,
+      }, onNextChunkExpected.bind(this))) {
+        onNextChunkExpected.bind(this)();
+      }
     }
   }.bind(this));
+};
+
+GoogleDrive.prototype.downloadChunkAsBlob_ = function(url, opt_range, callback) {
+  this.sendDriveRequest_('GET', url, {
+    responseType: 'blob',
+    expectedStatus: [200, 206],
+    range: opt_range,
+  }, callback);
 };
 
 /**

@@ -78,7 +78,7 @@ RequestSender.prototype.sendRequest = function(method, url, details, callback) {
   console.assert(!(details.body && details.multipartBody));
   console.assert(!(details.contentType && details.multipartBody));
   console.assert(!(url.indexOf('?') != -1 &&
-                   Object.keys(details.queryParametersi || {})).length > 0);
+                   Object.keys(details.queryParameters || {})).length > 0);
   if (details.body) {
     console.assert([String, Object, Blob, File].indexOf(
         details.body.constructor) != -1);

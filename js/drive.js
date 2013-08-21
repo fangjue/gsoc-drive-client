@@ -944,9 +944,12 @@ GoogleDrive.prototype.getRevision = function(fileId, revisionId, options,
 
 /**
  * @typedef {object} DriveWatchOptions
+ * @property {string} fileId The id of the file to watch. All changes (including
+ *     subscribed files and deleted files) will be watched if this property is
+ *     omitted.
  * @property {string} channelId A string that uniquely identifies this watch
- *     channel. It cannot contain '/' and may not contain more than 64
- *     charecters.
+ *     channel. It seems that only numbers, alphabets and hyphen ('-') can be
+ *     included in the channel id. It may not contain more than 64 charecters.
  * @property {string} receivingUrl The URL to receive notifications.
  * @property {string} token Optional. An arbitrary string value with no more
  *     than 256 characters.
@@ -965,20 +968,25 @@ GoogleDrive.prototype.watchChanges = function(options, callback) {
   console.assert(options.channelId && options.receivingUrl &&
       options.channelId.length <= 64);
   console.assert((options.token || '').length <= 256);
+  var url = this.DRIVE_API_CHANGES_WATCH_URL;
   var xhrOptions = {
     body: {
       id: options.channelId,
       type: 'web_hook',
       address: options.receivingUrl,
     },
+    queryParameters: {},
   };
 
+  if (options.fileId)
+    url = this.DRIVE_API_FILES_BASE_URL + '/' + options.fileId + '/watch';
   if (options.token)
     xhrOptions.body.token = options.token;
   if (options.ttl)
     xhrOptions.body.params = {ttl: options.ttl};
+  this.setFields_(xhrOptions.queryParameters, options, 'watch');
 
-  this.sendDriveRequest_('POST', this.DRIVE_API_CHANGES_WATCH_URL, xhrOptions,
+  this.sendDriveRequest_('POST', url, xhrOptions,
       function(xhr, error) {
     if (error)
       callback(null, error);

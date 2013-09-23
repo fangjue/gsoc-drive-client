@@ -1,5 +1,5 @@
 application: gsoc-drive-client
-version: 0-1
+version: 0-2
 runtime: python27
 api_version: 1
 threadsafe: true
@@ -11,6 +11,14 @@ handlers:
 - url: /google34bd2706d3a16e17\.html
   static_files: google34bd2706d3a16e17.html
   upload: google34bd2706d3a16e17.html
-- url: /notifications
+- url: /(notify|bind|status)
   script: handler.app
   secure: always
+- url: /(test|cron)
+  login: admin
+  secure: always
+  script: handler.app
+
+libraries:
+- name: pycrypto
+  version: latest

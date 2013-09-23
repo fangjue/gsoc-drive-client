@@ -63,11 +63,9 @@ class PushMessagingService(object):
     return self._RenewAccessToken()
 
   def SendMessage(self, channelId, subchannelId=0, payload=''):
-    if self._SendMessageInternal(channelId, subchannelId, payload) == 403:
-      self._RenewAccessToken()
-      self._SendMessageInternal(channelId, subchannelId, payload)
+    status = self._SendMessageInternal(channelId, subchannelId, payload)
 
-  def _SendMessageInternal(self, channelId, subchannelId, payload):
+  def _SendMessageInternal(self, channelId, subchannelId, payload, retry=True):
     result = urlfetch.fetch(url=_PUSH_MESSAGE_URL,
                             payload=json.dumps({
                               'channelId': channelId,
@@ -79,7 +77,10 @@ class PushMessagingService(object):
                               'Content-Type': 'application/json',
                               'Authorization': 'Bearer ' + self._GetAccessToken(),
                             })
-    if result.status_code != 200:
+    if (result.status_code == 401 or result.status_code == 403) and retry:
+      self._RenewAccessToken()
+      self._SendMessageInternal(channelId, subchannelId, payload, retry = False)
+    elif result.status_code < 200 or result.status_code >= 300:
       logging.warning('Push messaging failed with status %s and response %s' %
                       (result.status_code, result.content))
     return result.status_code

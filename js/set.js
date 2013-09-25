@@ -1,5 +1,6 @@
 /**
- * @fileoverview A simple JavaScript set. Only string items are supported.
+ * @fileoverview A simple JavaScript set. Only string items are supported. Other
+ * types will be converted to strings.
  */
 
 'use strict';
@@ -129,4 +130,9 @@ Set.prototype.minus = function(that) {
  */
 Set.prototype.forEach = function() {
   Array.prototype.forEach.apply(this.toArray(), arguments);
+};
+
+Set.prototype.filter = function() {
+  return Set.fromArray(Array.prototype.filter.apply(this.toArray(),
+      arguments));
 };

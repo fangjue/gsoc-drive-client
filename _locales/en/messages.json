@@ -4,5 +4,17 @@
   },
   "appDescription": {
     "message": "A Chrome App that syncs your files with Google Drive."
+  },
+  "fileError_GenericFileError": {
+    "message": "Error accessing your files."
+  },
+  "fileError_NotFoundError": {
+    "message": "The specified file cannot be found."
+  },
+  "fileError_SecurityError": {
+    "message": "Error accessing your files."
+  },
+  "fileError_NotReadableError": {
+    "message": "Error reading your files."
   }
 }

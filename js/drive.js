@@ -44,10 +44,7 @@ var GoogleDrive = function(opt_options) {
 
   this.getToken_ = opt_options.tokenProvider || function(callback) {
     var startTime = new Date();
-    (chrome.identity || chrome.experimental.identity).getAuthToken(
-        {}, function(token) {
-      log.chromeIdentity.info(chrome.identity ? 'stable' : 'experimental',
-                              new Date() - startTime);
+    chrome.identity.getAuthToken({}, function(token) {
       callback(token);
     });
   };
@@ -838,9 +835,13 @@ GoogleDrive.prototype.getProperty = function(fileId, propertyKey, isPublic,
     callback) {
   var url = this.DRIVE_API_FILES_BASE_URL + '/' + fileId +
       '/properties/' + propertyKey;
-  this.sendDriveRequest_('GET', url, {queryParameters: {visibility:
-      isPublic ? 'PUBLIC' : 'PRIVATE'}, expectedStatus: [200]},
-      function(xhr, error) {
+  this.sendDriveRequest_('GET', url, {
+    queryParameters: {
+      visibility: isPublic ? 'PUBLIC' : 'PRIVATE',
+      fields: 'value'
+    },
+    expectedStatus: [200],
+  }, function(xhr, error) {
     if (error)
       callback(null, error);
     else

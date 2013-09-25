@@ -310,12 +310,11 @@ class BindHandler(webapp2.RequestHandler):
     return rpc
 
 # GET /status
-# Content-Type: application/json
 #
 # <channelId>
 #
-# established|ready|suspended
-# established: The notification channel is established (Drive API's watch
+# created|ready|suspended
+# created: The notification channel is established (Drive API's watch
 #     request succeeded).
 # ready: The first 'sync' notification for the channel is received and it's
 #     to receive change notifications.
@@ -325,7 +324,21 @@ class BindHandler(webapp2.RequestHandler):
 #     forwarded until another bind request is sent.
 class StatusHandler(webapp2.RequestHandler):
   def get(self):
-    pass
+    channelId = self.request.body
+    if not re.match(_CHANNEL_ID_REGEX, channelId):
+      self.response.status = 404
+      return
+
+    status = Channels.GetStatus(channelId)
+    self.response.status = 200
+    if status == models.STATUS_READY:
+      self.response.write('ready')
+    elif status == models.STATUS_PENDING:
+      self.response.write('pending')
+    elif status == models.STATUS_CREATED:
+      self.response.write('created')
+    else:
+      self.response.status = 404
 
 class TestHandler(webapp2.RequestHandler):
   def get(self):

@@ -3,14 +3,25 @@
   "name": "__MSG_appName__",
   "description": "__MSG_appDescription__",
   "version": "0.1",
+  "minimum_chrome_version": "31.0.1616.0",
   "default_locale": "en",
   "offline_enabled": false,
   "app": {
     "background": {
       "scripts": [
+        "js/storage_keys.js",
+        "js/set.js",
         "js/utils.js",
-        "js/logging/logging.js",
+        "js/logging.js",
+        "js/request_sender.js",
         "js/drive.js",
+        "js/task_queue.js",
+        "js/local_files.js",
+        "js/remote_files.js",
+        "js/push_notifications.js",
+        "js/sync_engine.js",
+        "third_party/crypto-js/rollups/md5.js",
+        "js/file_handler.js",
         "js/bg.js"
       ]
     }
@@ -41,14 +52,21 @@
   },
   "permissions": [
     "alarms",
-    "experimental",
-    {"fileSystem": ["write", "retainFiles", "retainEntries"]},
+    "contextMenus",
+    {"fileSystem": [
+      "directory",
+      "write",
+      "retainEntries"
+    ]},
     "identity",
     "notifications",
+    "pushMessaging",
+    "signedInDevices",
     "storage",
-    "systemInfo.memory",
+    "system.memory",
     "unlimitedStorage",
-    "https://ssl.gstatic.com/",
-    "https://www.googleapis.com/"
+    "https://www.googleapis.com/",
+    "https://*.googleusercontent.com/",
+    "https://gsoc-drive-client.appspot.com/"
   ]
 }

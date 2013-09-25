@@ -53,10 +53,15 @@ function asyncForEach(items, operationCallback, resultCallback, results_) {
  * @param {function} operationCallback
  * @param {function} resultCallback
  */
-function asyncEvery(items, operationCallback, resultCallback) {
+function asyncEveryWithIndex(items, operationCallback, resultCallback) {
   var results = [];
+  if (items.length == 0) {
+    resultCallback(results);
+    return;
+  }
+
   Array.prototype.forEach.call(items, function(item, i) {
-    operationCallback(item, function(i) {
+    operationCallback(item, i, function(i) {
       results[i] = Array.prototype.slice.call(arguments, 1);
 
       for (var i = 0; i < items.length; ++i)
@@ -69,6 +74,12 @@ function asyncEvery(items, operationCallback, resultCallback) {
     }.bind(this, i));
   });
 }
+
+function asyncEvery(items, operationCallback, resultCallback) {
+  asyncEveryWithIndex(items, function(item, index, callback) {
+    operationCallback(item, callback);
+  }, resultCallback);
+};
 
 /**
  * Simplified version of asyncForEach, where operationCallback's callback
@@ -89,6 +100,20 @@ function asyncEvery1(items, operationsCallback, resultCallback) {
       return args[0];
     }));
   });
+}
+
+function asyncEveryWithIndex1(items, operationsCallback, resultCallback) {
+  asyncEveryWithIndex(items, operationsCallback, function(results) {
+    resultCallback(results.map(function(args) {
+      return args[0];
+    }));
+  });
+}
+
+function asyncCallEvery(callbacks, resultCallback) {
+  asyncEvery(callbacks, function(callback, completedCallback) {
+    callback(completedCallback);
+  }, resultCallback);
 }
 
 /**
@@ -187,6 +212,10 @@ function strEndsWith(str1, str2) {
   return str1.substr(-str2.length) == str2;
 }
 
+function strTrim(str) {
+  return str.replace(/^\s+|\s+$/g, '');
+}
+
 /**
  * Invoke |callback| after specified number of milliseconds, trying to keep
  * the event page alive. Useful when you need to retry a network request after
@@ -213,6 +242,47 @@ function setTimeoutKeepAlive(callback, delay) {
   });
 }
 
+function boolEquals(a, b) {
+  return (a && b) || (!a && !b);
+}
+
+function readBlob(blob, format, callback) {
+  var reader = new FileReader();
+  reader.onload = function() {
+    callback(reader.result);
+  };
+  reader.onerror = function() {
+    callback(null, reader.error);
+  };
+  switch (format) {
+    case 'arraybuffer':
+      reader.readAsArrayBuffer(blob);
+      break;
+    case 'binarystring':
+      reader.readAsBinaryString(blob);
+      break;
+    case 'dataurl':
+      reader.readAsDataURL(blob);
+      break;
+    default:
+      reader.readAsText(blob);
+      break;
+  }
+}
+
+function readFileEntry(entry, options, callback) {
+  if (!options)
+    options = {};
+  entry.file(function(file) {
+    if (options.maxSize && file.size > options.maxSize)
+      callback();
+    else
+      readBlob(file, options.format, callback);
+  }, function(err) {
+    callback(null, err);
+  });
+}
+
 // For debugging.
 var __;
 function _() {
@@ -221,3 +291,21 @@ function _() {
   else
     console.log(__ = arguments);
 }
+
+function _R(source) {
+  var reader = new FileReader();
+  reader.onload = function() {
+    console.log(reader.result);
+  };
+  function handleBlob(blob) {
+    reader.readAsText(blob);
+  }
+  if (source.file)
+    source.file(handleBlob);
+  else
+    handleBlob(source);
+}
+
+function _randomDelay(callback, unit) {
+  window.setTimeout(callback, Math.random() * (unit || 1000));
+};

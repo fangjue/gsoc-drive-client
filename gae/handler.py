@@ -33,6 +33,8 @@ _DRIVE_API_WATCH_TYPE = 'web_hook'
 # changes.watch requests are generally slow.
 _DRIVE_API_REQUEST_DEADLINE = 25
 _UNSYNCED_CHANNEL_TTL = timedelta(minutes=5)
+# Should be consistent with ../js/push_notifications.js
+_CHANNEL_TIME_SEPARATOR = '|'
 
 # According to https://developers.google.com/drive/push#msg-format, request
 # body for change notifications is very small and 256 should be enough.
@@ -234,7 +236,13 @@ class BindHandler(webapp2.RequestHandler):
         self.response.status = 500
         self.response.write('API server error.')
         return None
-      gcmChannel = response.get('value')
+      value = response.get('value')
+      try:
+        gcmChannel, lastUsed = value.split(_CHANNEL_TIME_SEPARATOR)
+      except ValueError:
+        self.response.status = 400
+        self.response.write('Invalid gcmChannel property value.')
+        return None
       if not self._isValidGcmChannelId(gcmChannel):
         self.response.status = 400
         self.response.write('Invalid GCM channel id.')
@@ -285,12 +293,14 @@ class BindHandler(webapp2.RequestHandler):
     })
 
   def _refreshChannel(self, channelId, largestChangeId):
-    self.response.status = 200
     result = Channels.Renew(channelId, largestChangeId)
     if result == True:
-      self.response.write('Renewed!')
+      self.response.status = 204
+    elif result is None:
+      self.response.status = 404
     else:
-      self.response.write(result or '')
+      self.response.status = 200
+      self.response.write(result)
 
   def _sendRequest(self, method, url, body=None):
     rpc = urlfetch.create_rpc(deadline=_DRIVE_API_REQUEST_DEADLINE)
